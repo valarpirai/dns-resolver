@@ -100,6 +100,23 @@ public class Configuration {
     }
 
     /**
+     * Get long property with environment variable override
+     */
+    public long getLong(String key, long defaultValue) {
+        String value = getString(key);
+        if (value == null) {
+            return defaultValue;
+        }
+
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            LOGGER.warning("Invalid long value for " + key + ": " + value + ", using default: " + defaultValue);
+            return defaultValue;
+        }
+    }
+
+    /**
      * Get boolean property with environment variable override
      */
     public boolean getBoolean(String key, boolean defaultValue) {

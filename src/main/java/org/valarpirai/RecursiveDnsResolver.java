@@ -3,6 +3,7 @@ package org.valarpirai;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
 import java.util.ArrayList;
@@ -16,19 +17,20 @@ import java.util.logging.Logger;
  */
 public class RecursiveDnsResolver {
     private static final Logger LOGGER = Logger.getLogger(RecursiveDnsResolver.class.getName());
-    private static final int TIMEOUT_MS = 5000;
     private static final int BUFFER_SIZE = 4096;
 
     private final List<String> rootServers;
     private final DnsCache cache;
     private final Configuration config;
     private final int maxDepth;
+    private final int timeoutMs;
 
     public RecursiveDnsResolver(Configuration config) {
         this.config = config;
         this.cache = new DnsCache(config);
         this.rootServers = new ArrayList<>();
         this.maxDepth = config.getInt("resolver.max.depth", 16);
+        this.timeoutMs = config.getInt("resolver.timeout", 5000);
 
         // Load root servers
         String rootConfig = config.getString("resolver.root.servers",
@@ -37,7 +39,8 @@ public class RecursiveDnsResolver {
             rootServers.add(server.trim());
         }
 
-        LOGGER.info("Recursive DNS Resolver initialized with " + rootServers.size() + " root servers");
+        LOGGER.info(String.format("Recursive DNS Resolver initialized with %d root servers, timeout: %d ms",
+                rootServers.size(), timeoutMs));
     }
 
     /**
@@ -183,6 +186,8 @@ public class RecursiveDnsResolver {
                     return resolveRecursive(qname, qtype, referralNS, depth + 1, stats);
                 }
 
+            } catch (SocketTimeoutException e) {
+                LOGGER.warning(String.format("Nameserver %s timed out after %d ms", ns, timeoutMs));
             } catch (Exception e) {
                 LOGGER.log(Level.WARNING, "Failed to query nameserver " + ns, e);
             }
@@ -219,9 +224,10 @@ public class RecursiveDnsResolver {
             byte[] queryBytes = buildQuery(request);
 
             // Send query
+            long queryStartTime = System.currentTimeMillis();
             channel = DatagramChannel.open();
             channel.configureBlocking(true);
-            channel.socket().setSoTimeout(TIMEOUT_MS);
+            channel.socket().setSoTimeout(timeoutMs);
 
             InetAddress serverAddress = InetAddress.getByName(nameserver);
             InetSocketAddress serverSocket = new InetSocketAddress(serverAddress, 53);
@@ -233,7 +239,13 @@ public class RecursiveDnsResolver {
             ByteBuffer receiveBuffer = ByteBuffer.allocate(BUFFER_SIZE);
             InetSocketAddress responseAddress = (InetSocketAddress) channel.receive(receiveBuffer);
 
+            long queryTime = System.currentTimeMillis() - queryStartTime;
+            if (config.isDebugEnabled()) {
+                LOGGER.info(String.format("Query to %s completed in %d ms", nameserver, queryTime));
+            }
+
             if (responseAddress == null) {
+                LOGGER.warning(String.format("No response from %s (timed out after %d ms)", nameserver, timeoutMs));
                 return null;
             }
 
@@ -531,6 +543,15 @@ public class RecursiveDnsResolver {
             this.name = name;
             this.newPosition = newPosition;
         }
+    }
+
+    /**
+     * Shutdown the resolver and cleanup resources
+     */
+    public void shutdown() {
+        LOGGER.info("Shutting down recursive DNS resolver...");
+        cache.shutdown();
+        LOGGER.info("Recursive DNS resolver shutdown completed");
     }
 
     /**

@@ -3,9 +3,12 @@ package org.valarpirai;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.Expiry;
+import com.github.benmanes.caffeine.cache.RemovalCause;
 import lombok.extern.java.Log;
 
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 
@@ -19,11 +22,19 @@ public class DnsCache {
 
     private final Cache<CacheKey, CacheEntry> cache;
     private final Configuration config;
+    private final ScheduledExecutorService statsScheduler;
+    private final int maxEntries;
+    private final long maxMemoryBytes;
 
     public DnsCache(Configuration config) {
         this.config = config;
 
-        // Build cache with custom TTL expiration
+        // Read cache configuration
+        this.maxEntries = config.getInt("cache.max.entries", 10000);
+        this.maxMemoryBytes = config.getLong("cache.max.memory", 10485760L); // 10MB default
+        int statsInterval = config.getInt("cache.stats.interval", 300); // 5 minutes default
+
+        // Build cache with custom TTL expiration and memory-based eviction
         this.cache = Caffeine.newBuilder()
                 .expireAfter(new Expiry<CacheKey, CacheEntry>() {
                     @Override
@@ -44,11 +55,50 @@ public class DnsCache {
                         return currentDuration;
                     }
                 })
-                .maximumSize(10000)
+                .maximumWeight(maxMemoryBytes)
+                .weigher((CacheKey key, CacheEntry value) -> {
+                    // Calculate approximate memory usage
+                    int keySize = key.name.length() * 2 + 4; // String chars + type int
+                    int entrySize = 4; // ttl int
+                    int recordsSize = value.records.stream()
+                            .mapToInt(record ->
+                                record.name().length() * 2 + // name string
+                                4 + 4 + 4 + 4 + // type, class, ttl, rdlength (ints)
+                                (record.rdata() != null ? record.rdata().length : 0) // rdata bytes
+                            )
+                            .sum();
+                    return keySize + entrySize + recordsSize;
+                })
+                .removalListener((CacheKey key, CacheEntry value, RemovalCause cause) -> {
+                    if (config.isDebugEnabled() && cause == RemovalCause.SIZE) {
+                        LOGGER.info(String.format("Cache eviction (size limit): %s %s",
+                                key.name, getTypeName(key.type)));
+                    }
+                })
                 .recordStats()
                 .build();
 
-        LOGGER.info("DNS Cache initialized with TTL-based expiration");
+        LOGGER.info(String.format("DNS Cache initialized - Max entries: %d, Max memory: %d bytes (%.2f MB), TTL-based expiration enabled",
+                maxEntries, maxMemoryBytes, maxMemoryBytes / 1024.0 / 1024.0));
+
+        // Schedule periodic stats logging if enabled
+        if (statsInterval > 0) {
+            this.statsScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "dns-cache-stats");
+                t.setDaemon(true);
+                return t;
+            });
+            this.statsScheduler.scheduleAtFixedRate(
+                    this::printStats,
+                    statsInterval,
+                    statsInterval,
+                    TimeUnit.SECONDS
+            );
+            LOGGER.info(String.format("Cache statistics will be logged every %d seconds", statsInterval));
+        } else {
+            this.statsScheduler = null;
+            LOGGER.info("Periodic cache statistics logging is disabled");
+        }
     }
 
     /**
@@ -112,11 +162,35 @@ public class DnsCache {
      */
     public void printStats() {
         var stats = cache.stats();
-        LOGGER.info(String.format("Cache Stats - Hits: %d, Misses: %d, Size: %d, Hit Rate: %.2f%%",
+        long estimatedSize = cache.estimatedSize();
+        long evictionCount = stats.evictionCount();
+
+        LOGGER.info(String.format("Cache Stats - Hits: %d, Misses: %d, Evictions: %d, Size: %d entries, Hit Rate: %.2f%%, Max Memory: %.2f MB",
                 stats.hitCount(),
                 stats.missCount(),
-                cache.estimatedSize(),
-                stats.hitRate() * 100));
+                evictionCount,
+                estimatedSize,
+                stats.hitRate() * 100,
+                maxMemoryBytes / 1024.0 / 1024.0));
+    }
+
+    /**
+     * Shutdown the cache and cleanup resources
+     */
+    public void shutdown() {
+        if (statsScheduler != null) {
+            statsScheduler.shutdown();
+            try {
+                if (!statsScheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+                    statsScheduler.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                statsScheduler.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
+        cache.invalidateAll();
+        LOGGER.info("DNS Cache shutdown completed");
     }
 
     /**
