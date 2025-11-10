@@ -149,13 +149,7 @@ public class DnsServer {
             DnsRequest request = DnsRequest.parse(query);
             long parseTime = System.currentTimeMillis() - parseStartTime;
 
-            if (config.isDebugEnabled()) {
-                LOGGER.info(String.format("DNS Query from %s:%d", clientAddress.getHostString(), clientAddress.getPort()));
-                for (DnsQuestion question : request.getQuestions()) {
-                    LOGGER.info(String.format("  Question: %s (Type: %s, Class: %s)",
-                            question.name(), question.getTypeName(), question.getClassName()));
-                }
-            }
+            // Removed verbose query logging - details are in the final summary
 
             // Resolve the query using recursive resolver
             long resolveStartTime = System.currentTimeMillis();
@@ -192,9 +186,14 @@ public class DnsServer {
 
             long totalTime = System.currentTimeMillis() - requestStartTime;
 
+            // Get query name for logging
+            String queryName = request.getQuestions().isEmpty() ? "UNKNOWN" : request.getQuestions().get(0).name();
+            String queryType = request.getQuestions().isEmpty() ? "?" : request.getQuestions().get(0).getTypeName();
+
             // Always log request summary with timing and statistics
-            String cacheStatus = response.isCacheHit() ? "CACHE HIT" : "CACHE MISS";
-            LOGGER.info(String.format("Request completed in %d ms (parse: %d ms, resolve: %d ms, serialize: %d ms, send: %d ms) | %s | queries: %d | depth: %d | answers: %d | %s:%d",
+            String cacheStatus = response.isCacheHit() ? "HIT" : "MISS";
+            LOGGER.info(String.format("%s %s | %d ms (parse:%d resolve:%d serialize:%d send:%d) | cache:%s queries:%d depth:%d answers:%d | %s:%d",
+                    queryName, queryType,
                     totalTime, parseTime, resolveTime, serializeTime, sendTime,
                     cacheStatus, response.getQueriesMade(), response.getMaxDepthReached(),
                     response.getAnswers().size(),
