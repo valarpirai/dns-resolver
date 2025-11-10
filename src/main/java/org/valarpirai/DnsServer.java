@@ -136,47 +136,38 @@ public class DnsServer {
      * Process DNS query and send response
      */
     private void processDnsQuery(ByteBuffer queryBuffer, InetSocketAddress clientAddress) throws IOException {
-        // For now, we'll just echo back a simple response
-        // In a real implementation, you would parse the DNS query and construct a proper response
-
         byte[] query = new byte[queryBuffer.remaining()];
         queryBuffer.get(query);
 
-        // Create a basic DNS response (this is a simplified example)
-        ByteBuffer responseBuffer = createDnsResponse(query);
+        try {
+            // Parse DNS request using DTO
+            DnsRequest request = DnsRequest.parse(query);
 
-        // Send response back to client
-        int bytesSent = channel.send(responseBuffer, clientAddress);
-        if (config.isDebugEnabled()) {
-            LOGGER.info(String.format("Sent %d bytes response to %s:%d",
-                    bytesSent, clientAddress.getHostString(), clientAddress.getPort()));
+            if (config.isDebugEnabled()) {
+                LOGGER.info(String.format("DNS Query from %s:%d", clientAddress.getHostString(), clientAddress.getPort()));
+                for (DnsQuestion question : request.getQuestions()) {
+                    LOGGER.info(String.format("  Question: %s (Type: %s, Class: %s)",
+                            question.getName(), question.getTypeName(), question.getClassName()));
+                }
+            }
+
+            // Create a basic DNS response (returns SERVFAIL for now)
+            DnsResponse response = new DnsResponse(request);
+            response.getHeader().setRcode(2); // SERVFAIL
+
+            // Convert response to bytes
+            byte[] responseBytes = response.toBytes();
+            ByteBuffer responseBuffer = ByteBuffer.wrap(responseBytes);
+
+            // Send response back to client
+            int bytesSent = channel.send(responseBuffer, clientAddress);
+            if (config.isDebugEnabled()) {
+                LOGGER.info(String.format("Sent %d bytes response to %s:%d",
+                        bytesSent, clientAddress.getHostString(), clientAddress.getPort()));
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Error processing DNS query from " + clientAddress, e);
         }
-    }
-
-    /**
-     * Create a DNS response (simplified - returns SERVFAIL for now)
-     */
-    private ByteBuffer createDnsResponse(byte[] query) {
-        // Copy query to response
-        ByteBuffer response = ByteBuffer.allocate(query.length);
-        response.put(query);
-        response.flip();
-
-        // Modify DNS header to indicate it's a response
-        // Set QR bit (query/response) to 1 (response)
-        // Set RCODE to 2 (SERVFAIL) since we're not implementing full DNS resolution yet
-        if (query.length >= 2) {
-            byte flags1 = query[2];
-            flags1 |= (byte) 0x80; // Set QR bit to 1 (response)
-            response.put(2, flags1);
-
-            byte flags2 = query[3];
-            flags2 = (byte) ((flags2 & 0xF0) | 0x02); // Set RCODE to SERVFAIL
-            response.put(3, flags2);
-        }
-
-        response.rewind();
-        return response;
     }
 
     /**
@@ -197,17 +188,6 @@ public class DnsServer {
         } catch (IOException e) {
             LOGGER.log(Level.SEVERE, "Error stopping DNS server", e);
         }
-    }
-
-    /**
-     * Utility method to convert bytes to hex string
-     */
-    private String bytesToHex(byte[] bytes) {
-        StringBuilder result = new StringBuilder();
-        for (byte b : bytes) {
-            result.append(String.format("%02X ", b));
-        }
-        return result.toString().trim();
     }
 
     /**
