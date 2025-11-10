@@ -18,7 +18,7 @@ import java.util.List;
 @AllArgsConstructor
 public class DnsRequest {
     @Builder.Default
-    private DnsHeader header = new DnsHeader();
+    private DnsHeader header = DnsHeader.builder().build();
 
     @Builder.Default
     private List<DnsQuestion> questions = new ArrayList<>();
@@ -41,34 +41,46 @@ public class DnsRequest {
         request.setRawData(data);
 
         // Parse header (12 bytes)
-        DnsHeader header = new DnsHeader();
-        header.setId(((data[0] & 0xFF) << 8) | (data[1] & 0xFF));
+        int id = ((data[0] & 0xFF) << 8) | (data[1] & 0xFF);
 
         int flags1 = data[2] & 0xFF;
         int flags2 = data[3] & 0xFF;
 
-        header.setQr((flags1 & 0x80) != 0);
-        header.setOpcode((flags1 >> 3) & 0x0F);
-        header.setAa((flags1 & 0x04) != 0);
-        header.setTc((flags1 & 0x02) != 0);
-        header.setRd((flags1 & 0x01) != 0);
+        boolean qr = (flags1 & 0x80) != 0;
+        int opcode = (flags1 >> 3) & 0x0F;
+        boolean aa = (flags1 & 0x04) != 0;
+        boolean tc = (flags1 & 0x02) != 0;
+        boolean rd = (flags1 & 0x01) != 0;
 
-        header.setRa((flags2 & 0x80) != 0);
-        header.setRcode(flags2 & 0x0F);
+        boolean ra = (flags2 & 0x80) != 0;
+        int rcode = flags2 & 0x0F;
 
-        header.setQdcount(((data[4] & 0xFF) << 8) | (data[5] & 0xFF));
-        header.setAncount(((data[6] & 0xFF) << 8) | (data[7] & 0xFF));
-        header.setNscount(((data[8] & 0xFF) << 8) | (data[9] & 0xFF));
-        header.setArcount(((data[10] & 0xFF) << 8) | (data[11] & 0xFF));
+        int qdcount = ((data[4] & 0xFF) << 8) | (data[5] & 0xFF);
+        int ancount = ((data[6] & 0xFF) << 8) | (data[7] & 0xFF);
+        int nscount = ((data[8] & 0xFF) << 8) | (data[9] & 0xFF);
+        int arcount = ((data[10] & 0xFF) << 8) | (data[11] & 0xFF);
+
+        DnsHeader header = DnsHeader.builder()
+                .id(id)
+                .qr(qr)
+                .opcode(opcode)
+                .aa(aa)
+                .tc(tc)
+                .rd(rd)
+                .ra(ra)
+                .rcode(rcode)
+                .qdcount(qdcount)
+                .ancount(ancount)
+                .nscount(nscount)
+                .arcount(arcount)
+                .build();
 
         request.setHeader(header);
 
         // Parse questions
         int position = 12;
-        for (int i = 0; i < header.getQdcount() && position < data.length; i++) {
+        for (int i = 0; i < header.qdcount() && position < data.length; i++) {
             try {
-                DnsQuestion question = new DnsQuestion();
-
                 // Parse domain name
                 StringBuilder domainName = new StringBuilder();
                 while (position < data.length) {
@@ -102,21 +114,27 @@ public class DnsRequest {
                     position += labelLength;
                 }
 
-                question.setName(domainName.toString());
+                String name = domainName.toString();
 
                 // Parse QTYPE (2 bytes)
+                int qtype = 0;
                 if (position + 1 < data.length) {
-                    int qtype = ((data[position] & 0xFF) << 8) | (data[position + 1] & 0xFF);
-                    question.setType(qtype);
+                    qtype = ((data[position] & 0xFF) << 8) | (data[position + 1] & 0xFF);
                     position += 2;
                 }
 
                 // Parse QCLASS (2 bytes)
+                int qclass = 0;
                 if (position + 1 < data.length) {
-                    int qclass = ((data[position] & 0xFF) << 8) | (data[position + 1] & 0xFF);
-                    question.setQclass(qclass);
+                    qclass = ((data[position] & 0xFF) << 8) | (data[position + 1] & 0xFF);
                     position += 2;
                 }
+
+                DnsQuestion question = DnsQuestion.builder()
+                        .name(name)
+                        .type(qtype)
+                        .qclass(qclass)
+                        .build();
 
                 request.addQuestion(question);
             } catch (Exception e) {

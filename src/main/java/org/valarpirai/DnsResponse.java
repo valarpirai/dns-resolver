@@ -19,7 +19,7 @@ import java.util.List;
 @AllArgsConstructor
 public class DnsResponse {
     @Builder.Default
-    private DnsHeader header = new DnsHeader();
+    private DnsHeader header = DnsHeader.builder().build();
 
     @Builder.Default
     private List<DnsQuestion> questions = new ArrayList<>();
@@ -27,17 +27,34 @@ public class DnsResponse {
     @Builder.Default
     private List<DnsRecord> answers = new ArrayList<>();
 
+    @Builder.Default
+    private List<DnsRecord> authority = new ArrayList<>();
+
+    @Builder.Default
+    private List<DnsRecord> additional = new ArrayList<>();
+
     public DnsResponse(DnsRequest request) {
-        this.header = new DnsHeader();
         this.questions = new ArrayList<>();
         this.answers = new ArrayList<>();
+        this.authority = new ArrayList<>();
+        this.additional = new ArrayList<>();
 
         // Copy header from request
-        this.header.setId(request.getHeader().getId());
-        this.header.setQr(true); // This is a response
-        this.header.setOpcode(request.getHeader().getOpcode());
-        this.header.setRd(request.getHeader().isRd());
-        this.header.setQdcount(request.getHeader().getQdcount());
+        DnsHeader reqHeader = request.getHeader();
+        this.header = DnsHeader.builder()
+                .id(reqHeader.id())
+                .qr(true) // This is a response
+                .opcode(reqHeader.opcode())
+                .aa(false)
+                .tc(false)
+                .rd(reqHeader.rd())
+                .ra(false)
+                .rcode(0)
+                .qdcount(reqHeader.qdcount())
+                .ancount(0)
+                .nscount(0)
+                .arcount(0)
+                .build();
 
         // Copy questions from request
         this.questions.addAll(request.getQuestions());
@@ -45,53 +62,61 @@ public class DnsResponse {
 
     public void addAnswer(DnsRecord answer) {
         this.answers.add(answer);
-        this.header.setAncount(this.answers.size());
+        this.header = this.header.withAncount(this.answers.size());
     }
 
     /**
      * Convert DNS response to byte array for transmission
      */
     public byte[] toBytes() {
-        ByteBuffer buffer = ByteBuffer.allocate(512);
+        // Calculate required buffer size dynamically to handle multiple answers
+        int estimatedSize = 512 + (answers.size() * 256); // Account for multiple answers
+        ByteBuffer buffer = ByteBuffer.allocate(estimatedSize);
+
+        // Update header counts to reflect actual data
+        header = header.withQdcount(questions.size());
+        header = header.withAncount(answers.size());
 
         // Write header
-        buffer.putShort((short) header.getId());
+        buffer.putShort((short) header.id());
 
         // Flags byte 1
         int flags1 = 0;
-        if (header.isQr()) flags1 |= 0x80;
-        flags1 |= (header.getOpcode() & 0x0F) << 3;
-        if (header.isAa()) flags1 |= 0x04;
-        if (header.isTc()) flags1 |= 0x02;
-        if (header.isRd()) flags1 |= 0x01;
+        if (header.qr()) flags1 |= 0x80;
+        flags1 |= (header.opcode() & 0x0F) << 3;
+        if (header.aa()) flags1 |= 0x04;
+        if (header.tc()) flags1 |= 0x02;
+        if (header.rd()) flags1 |= 0x01;
         buffer.put((byte) flags1);
 
         // Flags byte 2
         int flags2 = 0;
-        if (header.isRa()) flags2 |= 0x80;
-        flags2 |= (header.getRcode() & 0x0F);
+        if (header.ra()) flags2 |= 0x80;
+        flags2 |= (header.rcode() & 0x0F);
         buffer.put((byte) flags2);
 
-        buffer.putShort((short) header.getQdcount());
-        buffer.putShort((short) header.getAncount());
-        buffer.putShort((short) header.getNscount());
-        buffer.putShort((short) header.getArcount());
+        buffer.putShort((short) header.qdcount());
+        buffer.putShort((short) header.ancount());
+        buffer.putShort((short) header.nscount());
+        buffer.putShort((short) header.arcount());
 
         // Write questions
         for (DnsQuestion question : questions) {
-            writeQName(buffer, question.getName());
-            buffer.putShort((short) question.getType());
-            buffer.putShort((short) question.getQclass());
+            writeQName(buffer, question.name());
+            buffer.putShort((short) question.type());
+            buffer.putShort((short) question.qclass());
         }
 
-        // Write answers
+        // Write all answers
         for (DnsRecord answer : answers) {
-            writeQName(buffer, answer.getName());
-            buffer.putShort((short) answer.getType());
-            buffer.putShort((short) answer.getRclass());
-            buffer.putInt(answer.getTtl());
-            buffer.putShort((short) answer.getRdlength());
-            buffer.put(answer.getRdata());
+            writeQName(buffer, answer.name());
+            buffer.putShort((short) answer.type());
+            buffer.putShort((short) answer.rclass());
+            buffer.putInt(answer.ttl());
+            buffer.putShort((short) answer.rdlength());
+            if (answer.rdata() != null) {
+                buffer.put(answer.rdata());
+            }
         }
 
         byte[] result = new byte[buffer.position()];

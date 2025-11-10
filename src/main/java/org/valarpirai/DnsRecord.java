@@ -1,28 +1,56 @@
 package org.valarpirai;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
 /**
  * DNS Resource Record (Answer/Authority/Additional)
  */
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-public class DnsRecord {
-    private String name;       // Domain name
-    private int type;          // Record type (A, AAAA, CNAME, etc.)
-    private int rclass;        // Record class (usually 1=IN)
-    private int ttl;           // Time to live in seconds
-    private int rdlength;      // Length of rdata
-    private byte[] rdata;      // Record data
+public record DnsRecord(
+        String name,       // Domain name
+        int type,          // Record type (A, AAAA, CNAME, etc.)
+        int rclass,        // Record class (usually 1=IN)
+        int ttl,           // Time to live in seconds
+        int rdlength,      // Length of rdata
+        byte[] rdata       // Record data
+) {
+    // Compact constructor for validation and auto-calculation
+    public DnsRecord {
+        if (name == null) {
+            throw new IllegalArgumentException("Record name cannot be null");
+        }
+        // Auto-calculate rdlength from rdata
+        if (rdata != null) {
+            rdlength = rdata.length;
+        }
+    }
 
-    public void setRdata(byte[] rdata) {
-        this.rdata = rdata;
-        this.rdlength = rdata != null ? rdata.length : 0;
+    // Builder pattern for Records
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    public static class Builder {
+        private String name;
+        private int type;
+        private int rclass;
+        private int ttl;
+        private int rdlength;
+        private byte[] rdata;
+
+        public Builder name(String name) { this.name = name; return this; }
+        public Builder type(int type) { this.type = type; return this; }
+        public Builder rclass(int rclass) { this.rclass = rclass; return this; }
+        public Builder ttl(int ttl) { this.ttl = ttl; return this; }
+        public Builder rdlength(int rdlength) { this.rdlength = rdlength; return this; }
+        public Builder rdata(byte[] rdata) {
+            this.rdata = rdata;
+            if (rdata != null) {
+                this.rdlength = rdata.length;
+            }
+            return this;
+        }
+
+        public DnsRecord build() {
+            return new DnsRecord(name, type, rclass, ttl, rdlength, rdata);
+        }
     }
 
     public String getTypeName() {
@@ -60,7 +88,6 @@ public class DnsRecord {
                 .rclass(1)
                 .ttl(ttl)
                 .rdata(rdata)
-                .rdlength(rdata.length)
                 .build();
     }
 
@@ -77,7 +104,6 @@ public class DnsRecord {
                 .rclass(1)
                 .ttl(ttl)
                 .rdata(ipv6Address)
-                .rdlength(ipv6Address.length)
                 .build();
     }
 }
