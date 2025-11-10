@@ -33,6 +33,14 @@ public class DnsResponse {
     @Builder.Default
     private List<DnsRecord> additional = new ArrayList<>();
 
+    // Resolution statistics
+    @Builder.Default
+    private boolean cacheHit = false;
+    @Builder.Default
+    private int queriesMade = 0;
+    @Builder.Default
+    private int maxDepthReached = 0;
+
     public DnsResponse(DnsRequest request) {
         this.questions = new ArrayList<>();
         this.answers = new ArrayList<>();
