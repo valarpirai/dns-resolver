@@ -165,7 +165,7 @@ dns-resolver/
 │   └── main/
 │       ├── java/
 │       │   └── org/
-│       │       └── example/
+│       │       └── valarpirai/
 │       │           ├── Main.java           # Application entry point
 │       │           ├── DnsServer.java      # Non-blocking DNS server
 │       │           └── Configuration.java  # Configuration manager
