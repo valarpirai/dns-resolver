@@ -1,4 +1,4 @@
-package org.valarpirai;
+package org.valarpirai.protocol;
 
 /**
  * DNS Header structure (12 bytes)

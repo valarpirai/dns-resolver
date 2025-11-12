@@ -1,4 +1,7 @@
-package org.valarpirai;
+package org.valarpirai.cache;
+
+import org.valarpirai.util.Configuration;
+import org.valarpirai.protocol.DnsRecord;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

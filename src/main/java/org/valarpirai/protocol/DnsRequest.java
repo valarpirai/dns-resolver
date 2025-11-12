@@ -1,4 +1,4 @@
-package org.valarpirai;
+package org.valarpirai.protocol;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;

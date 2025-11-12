@@ -1,4 +1,4 @@
-package org.valarpirai;
+package org.valarpirai.protocol;
 
 /**
  * DNS Question section

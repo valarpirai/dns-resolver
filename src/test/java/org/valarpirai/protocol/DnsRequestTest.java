@@ -1,4 +1,4 @@
-package org.valarpirai;
+package org.valarpirai.protocol;
 
 import org.junit.jupiter.api.Test;
 import java.nio.ByteBuffer;
