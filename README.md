@@ -24,6 +24,13 @@ A non-blocking UDP DNS server built with Java NIO for handling DNS query request
 - Maven 3.9+
 - Docker (optional, for containerization)
 
+## Key Dependencies
+
+- **Lombok 1.18.30**: Reduces boilerplate code with @Data, @Builder annotations (compile-time only)
+- **Caffeine 3.1.8**: High-performance caching library with custom TTL-based expiry and memory-weighted eviction
+- **JUnit 5.10.1**: Testing framework for unit and integration tests
+- **Maven Shade Plugin**: Creates executable JAR with all dependencies
+
 ## Building the Application
 
 ### Using Maven
@@ -61,6 +68,10 @@ The application can be configured via:
 | `resolver.root.servers` | `DNS_RESOLVER_ROOT_SERVERS` | `198.41.0.4,...` | Root DNS servers (comma-separated) |
 | `resolver.timeout` | `DNS_RESOLVER_TIMEOUT` | `5000` | Query timeout in ms |
 | `resolver.max.depth` | `DNS_RESOLVER_MAX_DEPTH` | `16` | Maximum recursion depth |
+| `cache.max.entries` | `DNS_CACHE_MAX_ENTRIES` | `10000` | Maximum cache entries |
+| `cache.max.memory` | `DNS_CACHE_MAX_MEMORY` | `10485760` | Maximum memory (10MB) |
+| `cache.min.ttl` | `DNS_CACHE_MIN_TTL` | `10` | Minimum TTL in seconds |
+| `cache.stats.interval` | `DNS_CACHE_STATS_INTERVAL` | `300` | Stats logging interval in seconds |
 
 ### Configuration Examples
 
@@ -207,42 +218,139 @@ The resolver shows:
 3. **Authoritative query** (Depth 2): Gets final A record
 4. **Caching**: Stores result with TTL from DNS response
 
+## Running Tests
+
+The project includes comprehensive test coverage with **1,930+ lines of test code**.
+
+Run all tests:
+
+```bash
+mvn test
+```
+
+Run specific test class:
+
+```bash
+mvn test -Dtest=RecursiveDnsResolverIntegrationTest
+```
+
+### Test Coverage
+
+- **Protocol Tests**: DNS header, question, record, request, and response parsing
+- **Cache Tests**: TTL-based expiration, memory limits, statistics tracking (312 lines)
+- **Resolver Tests**: Recursive resolution, CNAME handling, glue records (329 lines)
+- **Server Tests**: Non-blocking I/O, query processing, graceful shutdown (320 lines)
+
 ## Project Structure
 
 ```
 dns-resolver/
 ├── src/
-│   └── main/
-│       ├── java/
-│       │   └── org/
-│       │       └── valarpirai/
-│       │           ├── Main.java                   # Application entry point
-│       │           ├── DnsServer.java              # Non-blocking DNS server
-│       │           ├── RecursiveDnsResolver.java   # True recursive DNS resolver
-│       │           ├── DnsCache.java               # Caffeine-based TTL cache
-│       │           ├── Configuration.java          # Configuration manager
-│       │           ├── DnsHeader.java              # DNS header DTO
-│       │           ├── DnsQuestion.java            # DNS question DTO
-│       │           ├── DnsRequest.java             # DNS request DTO
-│       │           ├── DnsResponse.java            # DNS response DTO
-│       │           └── DnsRecord.java              # DNS record DTO
-│       └── resources/
-│           └── application.properties      # Default configuration
-├── pom.xml                                 # Maven configuration
-├── Dockerfile                              # Docker image definition
-├── .dockerignore                           # Docker build exclusions
-├── .env.example                            # Example environment variables
-└── README.md                               # This file
+│   ├── main/
+│   │   ├── java/org/valarpirai/
+│   │   │   ├── server/
+│   │   │   │   ├── Main.java                    # Entry point
+│   │   │   │   └── DnsServer.java               # Non-blocking NIO server
+│   │   │   ├── resolver/
+│   │   │   │   ├── RecursiveDnsResolver.java    # True recursive resolver
+│   │   │   │   └── DnsResolver.java             # Forwarding resolver (unused)
+│   │   │   ├── cache/
+│   │   │   │   └── DnsCache.java                # Caffeine-based cache
+│   │   │   ├── protocol/
+│   │   │   │   ├── DnsHeader.java               # DNS header DTO
+│   │   │   │   ├── DnsQuestion.java             # Question DTO
+│   │   │   │   ├── DnsRequest.java              # Request DTO
+│   │   │   │   ├── DnsResponse.java             # Response DTO
+│   │   │   │   └── DnsRecord.java               # Resource record DTO
+│   │   │   └── util/
+│   │   │       ├── Configuration.java           # Config manager
+│   │   │       └── SingleLineFormatter.java     # Log formatter
+│   │   └── resources/
+│   │       └── application.properties            # Default config
+│   └── test/
+│       └── java/org/valarpirai/
+│           ├── cache/
+│           │   └── DnsCacheIntegrationTest.java
+│           ├── protocol/
+│           │   ├── DnsHeaderTest.java
+│           │   ├── DnsQuestionTest.java
+│           │   ├── DnsRecordTest.java
+│           │   ├── DnsRequestTest.java
+│           │   └── DnsResponseTest.java
+│           ├── resolver/
+│           │   └── RecursiveDnsResolverIntegrationTest.java
+│           └── server/
+│               └── DnsServerIntegrationTest.java
+├── pom.xml                                       # Maven configuration
+├── Dockerfile                                    # Docker image
+├── docker-compose.yml                            # Docker Compose
+├── .dockerignore                                 # Docker exclusions
+├── .env.example                                  # Example env vars
+└── README.md                                     # This file
 ```
 
 ## Architecture
 
-The DNS server uses Java NIO's non-blocking I/O model:
+### High-Level Architecture
 
-1. **DatagramChannel**: Non-blocking UDP channel for receiving DNS queries
-2. **Selector**: Multiplexes multiple channels for efficient event handling
-3. **Event Loop**: Processes incoming DNS queries asynchronously
-4. **Graceful Shutdown**: Handles SIGTERM/SIGINT for clean server shutdown
+```
+┌──────────────────────────────────────────────────────┐
+│                    DNS Client                         │
+│                  (dig, nslookup)                      │
+└────────────────────┬─────────────────────────────────┘
+                     │ UDP Query (Port 53)
+                     ▼
+┌──────────────────────────────────────────────────────┐
+│                   DnsServer                           │
+│          (Non-blocking Java NIO)                      │
+│  • DatagramChannel (UDP)                              │
+│  • Selector (Event Multiplexing)                      │
+│  • Event Loop                                         │
+└────────────────────┬─────────────────────────────────┘
+                     │
+                     ▼
+┌──────────────────────────────────────────────────────┐
+│              RecursiveDnsResolver                     │
+│  • Check DnsCache first                               │
+│  • If miss, start recursive resolution                │
+└────────────────────┬─────────────────────────────────┘
+                     │
+                     ▼
+┌──────────────────────────────────────────────────────┐
+│          True Recursive Resolution Flow               │
+│                                                        │
+│  1. Query Root Servers (13 roots)                     │
+│     └─► Get TLD nameservers (.com, .org, etc.)       │
+│                                                        │
+│  2. Query TLD Servers                                 │
+│     └─► Get Authoritative nameservers                 │
+│                                                        │
+│  3. Query Authoritative Servers                       │
+│     └─► Get final answer (A, AAAA, CNAME, etc.)      │
+│                                                        │
+│  • Handle CNAME chains                                │
+│  • Use glue records when available                    │
+│  • Cache results with TTL                             │
+└──────────────────────────────────────────────────────┘
+```
+
+### Data Flow
+
+1. **Query Reception**: Non-blocking DatagramChannel receives UDP DNS query
+2. **Parsing**: DnsRequest.parse() converts bytes to structured DTO
+3. **Cache Lookup**: DnsCache checks for cached response with TTL validation
+4. **Resolution**: If cache miss, RecursiveDnsResolver performs iterative queries starting from root servers
+5. **Response Building**: DnsResponse constructed with answers, authority, and additional sections
+6. **Caching**: Results stored in Caffeine cache with DNS TTL-based expiration
+7. **Serialization**: DnsResponse.toBytes() converts to network format
+8. **Transmission**: Response sent back to client via DatagramChannel
+
+### Key Components
+
+- **Non-blocking I/O**: DatagramChannel with Selector for concurrent query handling
+- **Event Loop**: Continuously processes ready channels with configurable timeout (1000ms)
+- **Graceful Shutdown**: Signal handlers (SIGTERM/SIGINT) for clean server termination
+- **Memory Management**: Weighted cache eviction based on actual memory usage (10MB default)
 
 ## Current Implementation
 
@@ -263,12 +371,14 @@ The current implementation:
 
 ## Future Enhancements
 
-- Full DNS query parsing
-- DNS resolution logic
-- Caching layer
-- Support for different record types (A, AAAA, CNAME, MX, etc.)
-- Forwarding to upstream DNS servers
-- Metrics and monitoring
+- DNSSEC validation for secure DNS resolution
+- Rate limiting and DDoS protection
+- Prometheus metrics export for monitoring
+- Persistent cache storage (Redis/disk-based)
+- Query logging and analytics
+- Support for DNS-over-TLS (DoT) and DNS-over-HTTPS (DoH)
+- IPv6 transport support
+- Zone file loading for authoritative responses
 
 ## License
 
