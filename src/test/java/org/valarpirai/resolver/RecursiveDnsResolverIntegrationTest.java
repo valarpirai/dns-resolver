@@ -1,4 +1,7 @@
-package org.valarpirai;
+package org.valarpirai.resolver;
+
+import org.valarpirai.util.Configuration;
+import org.valarpirai.protocol.*;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

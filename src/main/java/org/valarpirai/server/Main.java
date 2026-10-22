@@ -1,4 +1,7 @@
-package org.valarpirai;
+package org.valarpirai.server;
+
+import org.valarpirai.util.Configuration;
+import org.valarpirai.util.SingleLineFormatter;
 
 import java.io.IOException;
 import java.util.logging.ConsoleHandler;

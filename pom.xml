@@ -12,7 +12,7 @@
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <main.class>org.valarpirai.Main</main.class>
+        <main.class>org.valarpirai.server.Main</main.class>
         <lombok.version>1.18.30</lombok.version>
     </properties>
 

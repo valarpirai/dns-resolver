@@ -1,4 +1,7 @@
-package org.valarpirai;
+package org.valarpirai.resolver;
+
+import org.valarpirai.protocol.*;
+import org.valarpirai.util.Configuration;
 
 import java.io.IOException;
 import java.net.InetAddress;

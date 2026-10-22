@@ -1,4 +1,8 @@
-package org.valarpirai;
+package org.valarpirai.resolver;
+
+import org.valarpirai.protocol.*;
+import org.valarpirai.util.Configuration;
+import org.valarpirai.cache.DnsCache;
 
 import java.io.IOException;
 import java.net.InetAddress;

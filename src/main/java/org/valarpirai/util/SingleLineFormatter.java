@@ -1,4 +1,4 @@
-package org.valarpirai;
+package org.valarpirai.util;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;

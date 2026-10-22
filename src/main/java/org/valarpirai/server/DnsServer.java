@@ -1,4 +1,9 @@
-package org.valarpirai;
+package org.valarpirai.server;
+
+import lombok.Getter;
+import org.valarpirai.util.Configuration;
+import org.valarpirai.resolver.RecursiveDnsResolver;
+import org.valarpirai.protocol.*;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -18,12 +23,16 @@ public class DnsServer {
 
     private final Configuration config;
     private final RecursiveDnsResolver resolver;
+
+    @Getter
     private final int port;
     private final String bindAddress;
     private final int bufferSize;
     private final int selectorTimeout;
     private DatagramChannel channel;
     private Selector selector;
+
+    @Getter
     private volatile boolean running;
 
     public DnsServer() {
@@ -315,19 +324,5 @@ public class DnsServer {
             }
             default -> bytesToHex(record.rdata());
         };
-    }
-
-    /**
-     * Check if server is running
-     */
-    public boolean isRunning() {
-        return running;
-    }
-
-    /**
-     * Get the port the server is listening on
-     */
-    public int getPort() {
-        return port;
     }
 }

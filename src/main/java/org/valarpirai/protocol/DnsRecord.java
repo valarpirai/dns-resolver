@@ -1,4 +1,4 @@
-package org.valarpirai;
+package org.valarpirai.protocol;
 
 /**
  * DNS Resource Record (Answer/Authority/Additional)

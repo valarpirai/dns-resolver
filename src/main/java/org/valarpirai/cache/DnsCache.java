@@ -1,4 +1,7 @@
-package org.valarpirai;
+package org.valarpirai.cache;
+
+import org.valarpirai.util.Configuration;
+import org.valarpirai.protocol.DnsRecord;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
