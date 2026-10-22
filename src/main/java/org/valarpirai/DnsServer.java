@@ -17,6 +17,7 @@ public class DnsServer {
     private static final Logger LOGGER = Logger.getLogger(DnsServer.class.getName());
 
     private final Configuration config;
+    private final RecursiveDnsResolver resolver;
     private final int port;
     private final String bindAddress;
     private final int bufferSize;
@@ -31,6 +32,7 @@ public class DnsServer {
 
     public DnsServer(Configuration config) {
         this.config = config;
+        this.resolver = new RecursiveDnsResolver(config);
         this.port = config.getServerPort();
         this.bindAddress = config.getBindAddress();
         this.bufferSize = config.getBufferSize();
@@ -147,13 +149,29 @@ public class DnsServer {
                 LOGGER.info(String.format("DNS Query from %s:%d", clientAddress.getHostString(), clientAddress.getPort()));
                 for (DnsQuestion question : request.getQuestions()) {
                     LOGGER.info(String.format("  Question: %s (Type: %s, Class: %s)",
-                            question.getName(), question.getTypeName(), question.getClassName()));
+                            question.name(), question.getTypeName(), question.getClassName()));
                 }
             }
 
-            // Create a basic DNS response (returns SERVFAIL for now)
-            DnsResponse response = new DnsResponse(request);
-            response.getHeader().setRcode(2); // SERVFAIL
+            // Resolve the query using recursive resolver
+            DnsResponse response = resolver.resolve(request);
+
+            if (config.isDebugEnabled()) {
+                LOGGER.info(String.format("Response: %d answer(s), RCODE: %d",
+                        response.getAnswers().size(), response.getHeader().rcode()));
+
+                if (!response.getAnswers().isEmpty()) {
+                    LOGGER.info(";; ANSWER SECTION:");
+                    for (DnsRecord answer : response.getAnswers()) {
+                        LOGGER.info(String.format("%-30s %-6d %-5s %-6s %s",
+                                answer.name(),
+                                answer.ttl(),
+                                "IN",
+                                answer.getTypeName(),
+                                formatRecordData(answer)));
+                    }
+                }
+            }
 
             // Convert response to bytes
             byte[] responseBytes = response.toBytes();
@@ -199,6 +217,77 @@ public class DnsServer {
             result.append(String.format("%02X ", b));
         }
         return result.toString().trim();
+    }
+
+    /**
+     * Format DNS record data for logging
+     */
+    private String formatRecordData(DnsRecord record) {
+        if (record.rdata() == null || record.rdata().length == 0) {
+            return "empty";
+        }
+
+        return switch (record.type()) {
+            case 1 -> {  // A record (IPv4)
+                if (record.rdata().length == 4) {
+                    yield String.format("%d.%d.%d.%d",
+                            record.rdata()[0] & 0xFF,
+                            record.rdata()[1] & 0xFF,
+                            record.rdata()[2] & 0xFF,
+                            record.rdata()[3] & 0xFF);
+                }
+                yield bytesToHex(record.rdata());
+            }
+            case 28 -> { // AAAA record (IPv6)
+                if (record.rdata().length == 16) {
+                    StringBuilder ipv6 = new StringBuilder();
+                    for (int i = 0; i < 16; i += 2) {
+                        if (i > 0) ipv6.append(":");
+                        ipv6.append(String.format("%02x%02x",
+                                record.rdata()[i] & 0xFF,
+                                record.rdata()[i + 1] & 0xFF));
+                    }
+                    yield ipv6.toString();
+                }
+                yield bytesToHex(record.rdata());
+            }
+            case 5, 2, 12 -> { // CNAME, NS, PTR (domain names)
+                try {
+                    StringBuilder name = new StringBuilder();
+                    int pos = 0;
+                    while (pos < record.rdata().length) {
+                        int len = record.rdata()[pos] & 0xFF;
+                        if (len == 0) break;
+                        if ((len & 0xC0) == 0xC0) break; // Pointer
+                        pos++;
+                        if (name.length() > 0) name.append(".");
+                        for (int i = 0; i < len && pos < record.rdata().length; i++) {
+                            name.append((char) record.rdata()[pos++]);
+                        }
+                    }
+                    yield name.toString();
+                } catch (Exception e) {
+                    yield bytesToHex(record.rdata());
+                }
+            }
+            case 16 -> { // TXT record
+                try {
+                    StringBuilder txt = new StringBuilder("\"");
+                    int pos = 0;
+                    while (pos < record.rdata().length) {
+                        int len = record.rdata()[pos++] & 0xFF;
+                        for (int i = 0; i < len && pos < record.rdata().length; i++) {
+                            txt.append((char) record.rdata()[pos++]);
+                        }
+                    }
+                    txt.append("\"");
+                    yield txt.toString();
+                } catch (Exception e) {
+                    yield bytesToHex(record.rdata());
+                }
+            }
+            default -> bytesToHex(record.rdata());
+        };
     }
 
     /**

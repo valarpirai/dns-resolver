@@ -6,8 +6,15 @@ A non-blocking UDP DNS server built with Java NIO for handling DNS query request
 
 - Non-blocking I/O using Java NIO `DatagramChannel` and `Selector`
 - Listens on UDP port 53 (configurable)
-- Handles DNS query requests
+- **True Recursive DNS Resolution** - Starts from root DNS servers and follows the DNS hierarchy
+  - Queries 13 root servers for TLD nameservers
+  - Queries TLD servers for authoritative nameservers
+  - Queries authoritative servers for final answers
+  - Handles CNAME chains, referrals, and glue records
+- **TTL-based Caching** - Uses Caffeine for intelligent caching with DNS TTL expiration
+- Full DNS query/response parsing with DTOs
 - Configuration via properties file with environment variable overrides
+- Lombok-powered data classes for clean code
 - Docker containerization support
 - Executable JAR packaging
 
@@ -51,6 +58,9 @@ The application can be configured via:
 | `server.buffer.size` | `DNS_SERVER_BUFFER_SIZE` | `512` | Buffer size in bytes |
 | `server.selector.timeout` | `DNS_SERVER_SELECTOR_TIMEOUT` | `1000` | Selector timeout in ms |
 | `server.debug` | `DNS_SERVER_DEBUG` | `false` | Enable debug logging |
+| `resolver.root.servers` | `DNS_RESOLVER_ROOT_SERVERS` | `198.41.0.4,...` | Root DNS servers (comma-separated) |
+| `resolver.timeout` | `DNS_RESOLVER_TIMEOUT` | `5000` | Query timeout in ms |
+| `resolver.max.depth` | `DNS_RESOLVER_MAX_DEPTH` | `16` | Maximum recursion depth |
 
 ### Configuration Examples
 
@@ -144,18 +154,58 @@ docker-compose up -d
 You can test the DNS server using `dig` or `nslookup`:
 
 ```bash
-# Using dig
-dig @localhost -p 53 example.com
+# Test A record (IPv4)
+dig @localhost -p 5353 google.com A
+
+# Test AAAA record (IPv6)
+dig @localhost -p 5353 google.com AAAA
+
+# Test multiple answers (google.com typically has multiple IPs)
+dig @localhost -p 5353 google.com
+
+# Test CNAME record
+dig @localhost -p 5353 www.github.com
+
+# Test MX record (mail servers)
+dig @localhost -p 5353 gmail.com MX
 
 # Using nslookup
 nslookup example.com localhost
 ```
 
-If running on a custom port:
+### Multiple Answer Support
 
-```bash
-dig @localhost -p 5353 example.com
+The DNS resolver fully supports **multiple DNS answers** in responses:
+
+- **Multiple A records**: Domains with multiple IPv4 addresses (load balancing, CDN)
+- **Multiple AAAA records**: Domains with multiple IPv6 addresses
+- **Multiple MX records**: Mail servers with different priorities
+- **Multiple NS records**: Nameservers for a domain
+
+**Debug Output Example (Recursive Resolution):**
 ```
+DNS Query from 127.0.0.1:12345
+  Question: example.com (Type: A, Class: IN)
+=== Starting recursive resolution for example.com (Type: A) ===
+Cache MISS: example.com A
+[Depth 0] Querying for example.com (Type: A) using 13 nameserver(s)
+[Depth 0] Got referral to 13 nameserver(s)
+[Depth 1] Querying for example.com (Type: A) using 13 nameserver(s)
+[Depth 1] Got referral to 2 nameserver(s)
+[Depth 2] Querying for example.com (Type: A) using 2 nameserver(s)
+[Depth 2] Got 1 answer(s) from 199.43.135.53
+Cached: example.com A (1 record(s), TTL: 86400s)
+Response: 1 answer(s), RCODE: 0
+;; ANSWER SECTION:
+example.com                    86400  IN    A      93.184.216.34
+Sent 128 bytes response to 127.0.0.1:12345
+```
+
+The resolver shows:
+1. **Root query** (Depth 0): Gets TLD nameservers for .com
+2. **TLD query** (Depth 1): Gets authoritative nameservers for example.com
+3. **Authoritative query** (Depth 2): Gets final A record
+4. **Caching**: Stores result with TTL from DNS response
 
 ## Project Structure
 
@@ -166,9 +216,16 @@ dns-resolver/
 │       ├── java/
 │       │   └── org/
 │       │       └── valarpirai/
-│       │           ├── Main.java           # Application entry point
-│       │           ├── DnsServer.java      # Non-blocking DNS server
-│       │           └── Configuration.java  # Configuration manager
+│       │           ├── Main.java                   # Application entry point
+│       │           ├── DnsServer.java              # Non-blocking DNS server
+│       │           ├── RecursiveDnsResolver.java   # True recursive DNS resolver
+│       │           ├── DnsCache.java               # Caffeine-based TTL cache
+│       │           ├── Configuration.java          # Configuration manager
+│       │           ├── DnsHeader.java              # DNS header DTO
+│       │           ├── DnsQuestion.java            # DNS question DTO
+│       │           ├── DnsRequest.java             # DNS request DTO
+│       │           ├── DnsResponse.java            # DNS response DTO
+│       │           └── DnsRecord.java              # DNS record DTO
 │       └── resources/
 │           └── application.properties      # Default configuration
 ├── pom.xml                                 # Maven configuration
@@ -190,9 +247,19 @@ The DNS server uses Java NIO's non-blocking I/O model:
 ## Current Implementation
 
 The current implementation:
-- Receives DNS queries on UDP port 53
-- Logs incoming requests
-- Returns a basic DNS response (SERVFAIL for now)
+- **True Recursive Resolution**: Starts from root servers, not forwarding to other resolvers
+- **DNS Hierarchy Traversal**:
+  1. Queries root servers (a.root-servers.net through m.root-servers.net)
+  2. Follows referrals to TLD nameservers (.com, .org, etc.)
+  3. Queries TLD servers for authoritative nameservers
+  4. Gets final answer from authoritative servers
+- **Intelligent Caching**: Caffeine-based cache respects DNS TTL values
+- **CNAME Resolution**: Automatically follows CNAME chains
+- **Glue Record Support**: Uses additional section for faster resolution
+- Parses full DNS responses (answers, authority, additional sections)
+- Supports all standard query types (A, AAAA, CNAME, MX, TXT, NS, PTR, etc.)
+- Dynamic buffer sizing to handle large responses
+- Detailed debug logging showing resolution path
 
 ## Future Enhancements
 
