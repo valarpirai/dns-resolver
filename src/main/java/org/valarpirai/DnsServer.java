@@ -138,12 +138,16 @@ public class DnsServer {
      * Process DNS query and send response
      */
     private void processDnsQuery(ByteBuffer queryBuffer, InetSocketAddress clientAddress) throws IOException {
+        long requestStartTime = System.currentTimeMillis();
+
         byte[] query = new byte[queryBuffer.remaining()];
         queryBuffer.get(query);
 
         try {
             // Parse DNS request using DTO
+            long parseStartTime = System.currentTimeMillis();
             DnsRequest request = DnsRequest.parse(query);
+            long parseTime = System.currentTimeMillis() - parseStartTime;
 
             if (config.isDebugEnabled()) {
                 LOGGER.info(String.format("DNS Query from %s:%d", clientAddress.getHostString(), clientAddress.getPort()));
@@ -154,7 +158,9 @@ public class DnsServer {
             }
 
             // Resolve the query using recursive resolver
+            long resolveStartTime = System.currentTimeMillis();
             DnsResponse response = resolver.resolve(request);
+            long resolveTime = System.currentTimeMillis() - resolveStartTime;
 
             if (config.isDebugEnabled()) {
                 LOGGER.info(String.format("Response: %d answer(s), RCODE: %d",
@@ -174,17 +180,33 @@ public class DnsServer {
             }
 
             // Convert response to bytes
+            long serializeStartTime = System.currentTimeMillis();
             byte[] responseBytes = response.toBytes();
             ByteBuffer responseBuffer = ByteBuffer.wrap(responseBytes);
+            long serializeTime = System.currentTimeMillis() - serializeStartTime;
 
             // Send response back to client
+            long sendStartTime = System.currentTimeMillis();
             int bytesSent = channel.send(responseBuffer, clientAddress);
+            long sendTime = System.currentTimeMillis() - sendStartTime;
+
+            long totalTime = System.currentTimeMillis() - requestStartTime;
+
+            // Always log request summary with timing and statistics
+            String cacheStatus = response.isCacheHit() ? "CACHE HIT" : "CACHE MISS";
+            LOGGER.info(String.format("Request completed in %d ms (parse: %d ms, resolve: %d ms, serialize: %d ms, send: %d ms) | %s | queries: %d | depth: %d | answers: %d | %s:%d",
+                    totalTime, parseTime, resolveTime, serializeTime, sendTime,
+                    cacheStatus, response.getQueriesMade(), response.getMaxDepthReached(),
+                    response.getAnswers().size(),
+                    clientAddress.getHostString(), clientAddress.getPort()));
+
             if (config.isDebugEnabled()) {
                 LOGGER.info(String.format("Sent %d bytes response to %s:%d",
                         bytesSent, clientAddress.getHostString(), clientAddress.getPort()));
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error processing DNS query from " + clientAddress, e);
+            long totalTime = System.currentTimeMillis() - requestStartTime;
+            LOGGER.log(Level.WARNING, "Error processing DNS query from " + clientAddress + " after " + totalTime + " ms", e);
         }
     }
 

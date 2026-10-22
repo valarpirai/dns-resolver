@@ -44,6 +44,8 @@ public class RecursiveDnsResolver {
      * Resolve a DNS request recursively starting from root servers
      */
     public DnsResponse resolve(DnsRequest request) {
+        long startTime = System.currentTimeMillis();
+
         if (request.getQuestions().isEmpty()) {
             return createErrorResponse(request, 1); // Format error
         }
@@ -58,24 +60,49 @@ public class RecursiveDnsResolver {
         }
 
         // Check cache first
+        long cacheStartTime = System.currentTimeMillis();
         List<DnsRecord> cachedRecords = cache.get(qname, qtype);
         if (cachedRecords != null) {
+            long cacheTime = System.currentTimeMillis() - cacheStartTime;
+            long totalTime = System.currentTimeMillis() - startTime;
+
+            if (config.isDebugEnabled()) {
+                LOGGER.info(String.format("Resolution completed in %d ms (cache: %d ms)",
+                        totalTime, cacheTime));
+            }
+
             DnsResponse response = new DnsResponse(request);
             response.setHeader(response.getHeader().withRcode(0).withRa(true));
+            response.setCacheHit(true);
+            response.setQueriesMade(0);
+            response.setMaxDepthReached(0);
             for (DnsRecord record : cachedRecords) {
                 response.addAnswer(record);
             }
             return response;
         }
+        long cacheTime = System.currentTimeMillis() - cacheStartTime;
 
         // Start recursive resolution from root
         try {
-            List<DnsRecord> answers = resolveRecursive(qname, qtype, rootServers, 0);
+            long resolveStartTime = System.currentTimeMillis();
+            ResolutionStats stats = new ResolutionStats();
+            List<DnsRecord> answers = resolveRecursive(qname, qtype, rootServers, 0, stats);
+            long resolveTime = System.currentTimeMillis() - resolveStartTime;
+            long totalTime = System.currentTimeMillis() - startTime;
+
+            if (config.isDebugEnabled()) {
+                LOGGER.info(String.format("Resolution completed in %d ms (cache lookup: %d ms, recursive resolve: %d ms, queries made: %d, max depth: %d)",
+                        totalTime, cacheTime, resolveTime, stats.queriesMade, stats.maxDepthReached));
+            }
 
             DnsResponse response = new DnsResponse(request);
             response.setHeader(response.getHeader()
                     .withRcode(answers.isEmpty() ? 3 : 0)  // NXDOMAIN or NOERROR
                     .withRa(true));
+            response.setCacheHit(false);
+            response.setQueriesMade(stats.queriesMade);
+            response.setMaxDepthReached(stats.maxDepthReached);
 
             for (DnsRecord answer : answers) {
                 response.addAnswer(answer);
@@ -89,7 +116,8 @@ public class RecursiveDnsResolver {
             return response;
 
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Recursive resolution failed for " + qname, e);
+            long totalTime = System.currentTimeMillis() - startTime;
+            LOGGER.log(Level.SEVERE, "Recursive resolution failed for " + qname + " after " + totalTime + " ms", e);
             return createErrorResponse(request, 2); // Server failure
         }
     }
@@ -97,7 +125,9 @@ public class RecursiveDnsResolver {
     /**
      * Recursive resolution following DNS hierarchy
      */
-    private List<DnsRecord> resolveRecursive(String qname, int qtype, List<String> nameservers, int depth) {
+    private List<DnsRecord> resolveRecursive(String qname, int qtype, List<String> nameservers, int depth, ResolutionStats stats) {
+        stats.maxDepthReached = Math.max(stats.maxDepthReached, depth);
+
         if (depth > maxDepth) {
             LOGGER.warning("Max recursion depth reached for " + qname);
             return new ArrayList<>();
@@ -111,6 +141,7 @@ public class RecursiveDnsResolver {
         // Try each nameserver
         for (String ns : nameservers) {
             try {
+                stats.queriesMade++;
                 DnsResponse response = queryNameserver(qname, qtype, ns);
                 if (response == null) continue;
 
@@ -131,7 +162,7 @@ public class RecursiveDnsResolver {
                                         depth, qname, cname));
                             }
                             // Recursively resolve the CNAME
-                            List<DnsRecord> cnameAnswers = resolveRecursive(cname, qtype, rootServers, depth + 1);
+                            List<DnsRecord> cnameAnswers = resolveRecursive(cname, qtype, rootServers, depth + 1, stats);
                             // Combine CNAME with final answers
                             List<DnsRecord> allAnswers = new ArrayList<>(response.getAnswers());
                             allAnswers.addAll(cnameAnswers);
@@ -149,7 +180,7 @@ public class RecursiveDnsResolver {
                         LOGGER.info(String.format("[Depth %d] Got referral to %d nameserver(s)",
                                 depth, referralNS.size()));
                     }
-                    return resolveRecursive(qname, qtype, referralNS, depth + 1);
+                    return resolveRecursive(qname, qtype, referralNS, depth + 1, stats);
                 }
 
             } catch (Exception e) {
@@ -500,5 +531,13 @@ public class RecursiveDnsResolver {
             this.name = name;
             this.newPosition = newPosition;
         }
+    }
+
+    /**
+     * Statistics for tracking resolution performance
+     */
+    private static class ResolutionStats {
+        int queriesMade = 0;
+        int maxDepthReached = 0;
     }
 }

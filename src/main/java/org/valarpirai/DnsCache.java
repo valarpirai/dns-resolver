@@ -59,16 +59,12 @@ public class DnsCache {
         CacheEntry entry = cache.getIfPresent(key);
 
         if (entry != null) {
-            if (config.isDebugEnabled()) {
-                LOGGER.info(String.format("Cache HIT: %s %s (TTL: %ds)",
-                        name, getTypeName(type), entry.getTtl()));
-            }
+            LOGGER.info(String.format("Cache HIT: %s %s (TTL: %ds)",
+                    name, getTypeName(type), entry.getTtl()));
             return entry.getRecords();
         }
 
-        if (config.isDebugEnabled()) {
-            LOGGER.info(String.format("Cache MISS: %s %s", name, getTypeName(type)));
-        }
+        LOGGER.info(String.format("Cache MISS: %s %s", name, getTypeName(type)));
         return null;
     }
 
@@ -99,10 +95,8 @@ public class DnsCache {
         CacheEntry entry = new CacheEntry(records, minTtl);
         cache.put(key, entry);
 
-        if (config.isDebugEnabled()) {
-            LOGGER.info(String.format("Cached: %s %s (%d record(s), TTL: %ds)",
-                    name, getTypeName(type), records.size(), minTtl));
-        }
+        LOGGER.info(String.format("Cached: %s %s (%d record(s), TTL: %ds)",
+                name, getTypeName(type), records.size(), minTtl));
     }
 
     /**
