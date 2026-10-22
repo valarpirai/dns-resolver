@@ -1,5 +1,6 @@
 package org.valarpirai.cache;
 
+import lombok.extern.slf4j.Slf4j;
 import org.valarpirai.util.Configuration;
 import org.valarpirai.protocol.DnsRecord;
 
@@ -12,14 +13,13 @@ import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Logger;
 
 /**
  * DNS Response Cache using Caffeine
  * Implements TTL-based expiration from DNS responses
  */
+@Slf4j
 public class DnsCache {
-    private static final Logger LOGGER = Logger.getLogger(DnsCache.class.getName());
 
     private final Cache<CacheKey, CacheEntry> cache;
     private final Configuration config;
@@ -72,14 +72,14 @@ public class DnsCache {
                 })
                 .removalListener((CacheKey key, CacheEntry value, RemovalCause cause) -> {
                     if (config.isDebugEnabled() && cause == RemovalCause.SIZE) {
-                        LOGGER.info(String.format("Cache eviction (size limit): %s %s",
+                        log.info(String.format("Cache eviction (size limit): %s %s",
                                 key.name, getTypeName(key.type)));
                     }
                 })
                 .recordStats()
                 .build();
 
-        LOGGER.info(String.format("DNS Cache initialized - Max memory: %d bytes (%.2f MB), TTL-based expiration enabled",
+        log.info(String.format("DNS Cache initialized - Max memory: %d bytes (%.2f MB), TTL-based expiration enabled",
                 maxMemoryBytes, maxMemoryBytes / 1024.0 / 1024.0));
 
         // Schedule periodic stats logging if enabled
@@ -95,10 +95,10 @@ public class DnsCache {
                     statsInterval,
                     TimeUnit.SECONDS
             );
-            LOGGER.info(String.format("Cache statistics will be logged every %d seconds", statsInterval));
+            log.info(String.format("Cache statistics will be logged every %d seconds", statsInterval));
         } else {
             this.statsScheduler = null;
-            LOGGER.info("Periodic cache statistics logging is disabled");
+            log.info("Periodic cache statistics logging is disabled");
         }
     }
 
@@ -110,12 +110,12 @@ public class DnsCache {
         CacheEntry entry = cache.getIfPresent(key);
 
         if (entry != null) {
-            LOGGER.info(String.format("Cache HIT: %s %s (TTL: %ds)",
+            log.info(String.format("Cache HIT: %s %s (TTL: %ds)",
                     name, getTypeName(type), entry.getTtl()));
             return entry.getAgedRecords();
         }
 
-        LOGGER.info(String.format("Cache MISS: %s %s", name, getTypeName(type)));
+        log.info(String.format("Cache MISS: %s %s", name, getTypeName(type)));
         return null;
     }
 
@@ -136,7 +136,7 @@ public class DnsCache {
         // Don't cache records with very short TTL
         if (recordTtl < minTtl) {
             if (config.isDebugEnabled()) {
-                LOGGER.info(String.format("Skipping cache: %s %s (TTL too short: %ds)",
+                log.info(String.format("Skipping cache: %s %s (TTL too short: %ds)",
                         name, getTypeName(type), recordTtl));
             }
             return;
@@ -146,7 +146,7 @@ public class DnsCache {
         CacheEntry entry = new CacheEntry(records, recordTtl);
         cache.put(key, entry);
 
-        LOGGER.info(String.format("Cached: %s %s (%d record(s), TTL: %ds)",
+        log.info(String.format("Cached: %s %s (%d record(s), TTL: %ds)",
                 name, getTypeName(type), records.size(), recordTtl));
     }
 
@@ -155,7 +155,7 @@ public class DnsCache {
      */
     public void clear() {
         cache.invalidateAll();
-        LOGGER.info("Cache cleared");
+        log.info("Cache cleared");
     }
 
     /**
@@ -166,7 +166,7 @@ public class DnsCache {
         long estimatedSize = cache.estimatedSize();
         long evictionCount = stats.evictionCount();
 
-        LOGGER.info(String.format("Cache Stats - Hits: %d, Misses: %d, Evictions: %d, Size: %d entries, Hit Rate: %.2f%%, Max Memory: %.2f MB",
+        log.info(String.format("Cache Stats - Hits: %d, Misses: %d, Evictions: %d, Size: %d entries, Hit Rate: %.2f%%, Max Memory: %.2f MB",
                 stats.hitCount(),
                 stats.missCount(),
                 evictionCount,
@@ -191,7 +191,7 @@ public class DnsCache {
             }
         }
         cache.invalidateAll();
-        LOGGER.info("DNS Cache shutdown completed");
+        log.info("DNS Cache shutdown completed");
     }
 
     /**

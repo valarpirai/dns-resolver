@@ -78,13 +78,14 @@ class DnsRequestTest {
     void testParse_InvalidQuery_TooShort() {
         byte[] data = new byte[10];  // Less than 12 bytes (header size)
 
-        assertThrows(IllegalArgumentException.class, () ->
+        DnsException e = assertThrows(DnsException.class, () ->
                 DnsRequest.parse(data));
+        assertEquals(DnsException.FORMERR, e.getRcode());
     }
 
     @Test
     void testParse_NullData() {
-        assertThrows(IllegalArgumentException.class, () ->
+        assertThrows(DnsException.class, () ->
                 DnsRequest.parse(null));
     }
 

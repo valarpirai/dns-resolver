@@ -1,5 +1,6 @@
 package org.valarpirai.resolver;
 
+import lombok.extern.slf4j.Slf4j;
 import org.valarpirai.protocol.*;
 import org.valarpirai.util.Configuration;
 import org.valarpirai.cache.DnsCache;
@@ -20,15 +21,13 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 
 /**
  * True Recursive DNS Resolver
  * Starts from root servers and follows the DNS hierarchy
  */
+@Slf4j
 public class RecursiveDnsResolver {
-    private static final Logger LOGGER = Logger.getLogger(RecursiveDnsResolver.class.getName());
     private static final int BUFFER_SIZE = 4096;
     private static final int MAX_POINTER_JUMPS = 32;
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -53,7 +52,7 @@ public class RecursiveDnsResolver {
             rootServers.add(server.trim());
         }
 
-        LOGGER.info(String.format("Recursive DNS Resolver initialized with %d root servers, timeout: %d ms",
+        log.info(String.format("Recursive DNS Resolver initialized with %d root servers, timeout: %d ms",
                 rootServers.size(), timeoutMs));
     }
 
@@ -72,7 +71,7 @@ public class RecursiveDnsResolver {
         int qtype = question.type();
 
         if (config.isDebugEnabled()) {
-            LOGGER.info(String.format("=== Starting recursive resolution for %s (Type: %s) ===",
+            log.info(String.format("=== Starting recursive resolution for %s (Type: %s) ===",
                     qname, question.getTypeName()));
         }
 
@@ -84,7 +83,7 @@ public class RecursiveDnsResolver {
             long totalTime = System.currentTimeMillis() - startTime;
 
             if (config.isDebugEnabled()) {
-                LOGGER.info(String.format("Resolution completed in %d ms (cache: %d ms)",
+                log.info(String.format("Resolution completed in %d ms (cache: %d ms)",
                         totalTime, cacheTime));
             }
 
@@ -109,7 +108,7 @@ public class RecursiveDnsResolver {
             long totalTime = System.currentTimeMillis() - startTime;
 
             if (config.isDebugEnabled()) {
-                LOGGER.info(String.format("Resolution completed in %d ms (cache lookup: %d ms, recursive resolve: %d ms, queries made: %d, max depth: %d)",
+                log.info(String.format("Resolution completed in %d ms (cache lookup: %d ms, recursive resolve: %d ms, queries made: %d, max depth: %d)",
                         totalTime, cacheTime, resolveTime, stats.queriesMade, stats.maxDepthReached));
             }
 
@@ -132,9 +131,12 @@ public class RecursiveDnsResolver {
 
             return response;
 
+        } catch (DnsException e) {
+            log.warn("Resolution failed for " + qname + ": " + e.getMessage());
+            return createErrorResponse(request, e.getRcode());
         } catch (Exception e) {
             long totalTime = System.currentTimeMillis() - startTime;
-            LOGGER.log(Level.SEVERE, "Recursive resolution failed for " + qname + " after " + totalTime + " ms", e);
+            log.error("Recursive resolution failed for " + qname + " after " + totalTime + " ms", e);
             return createErrorResponse(request, 2); // Server failure
         }
     }
@@ -146,12 +148,12 @@ public class RecursiveDnsResolver {
         stats.maxDepthReached = Math.max(stats.maxDepthReached, depth);
 
         if (depth > maxDepth) {
-            LOGGER.warning("Max recursion depth reached for " + qname);
+            log.warn("Max recursion depth reached for " + qname);
             return new ArrayList<>();
         }
 
         if (config.isDebugEnabled()) {
-            LOGGER.info(String.format("[Depth %d] Querying for %s (Type: %s) using %d nameserver(s)",
+            log.info(String.format("[Depth %d] Querying for %s (Type: %s) using %d nameserver(s)",
                     depth, qname, getTypeName(qtype), nameservers.size()));
         }
 
@@ -167,7 +169,7 @@ public class RecursiveDnsResolver {
 
                 if (!response.getAnswers().isEmpty()) {
                     if (config.isDebugEnabled()) {
-                        LOGGER.info(String.format("[Depth %d] Got %d answer(s) from %s",
+                        log.info(String.format("[Depth %d] Got %d answer(s) from %s",
                                 depth, response.getAnswers().size(), ns));
                     }
 
@@ -178,7 +180,7 @@ public class RecursiveDnsResolver {
                     }
 
                     if (config.isDebugEnabled()) {
-                        LOGGER.info(String.format("[Depth %d] Following CNAME: %s -> %s", depth, qname, cnameTarget));
+                        log.info(String.format("[Depth %d] Following CNAME: %s -> %s", depth, qname, cnameTarget));
                     }
                     List<DnsRecord> allAnswers = new ArrayList<>(answers);
                     allAnswers.addAll(resolveRecursive(cnameTarget, qtype, rootServers, depth + 1, stats));
@@ -189,7 +191,7 @@ public class RecursiveDnsResolver {
                 List<String> referralNS = extractReferralNameservers(response, depth, stats);
                 if (!referralNS.isEmpty()) {
                     if (config.isDebugEnabled()) {
-                        LOGGER.info(String.format("[Depth %d] Got referral to %d nameserver(s)",
+                        log.info(String.format("[Depth %d] Got referral to %d nameserver(s)",
                                 depth, referralNS.size()));
                     }
                     // The child zone's servers were already all tried; siblings would return the same referral
@@ -202,9 +204,9 @@ public class RecursiveDnsResolver {
                 return new ArrayList<>();
 
             } catch (SocketTimeoutException e) {
-                LOGGER.warning(String.format("Nameserver %s timed out after %d ms", ns, timeoutMs));
+                log.warn(String.format("Nameserver %s timed out after %d ms", ns, timeoutMs));
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Failed to query nameserver " + ns, e);
+                log.warn("Failed to query nameserver " + ns, e);
             }
         }
 
@@ -282,7 +284,7 @@ public class RecursiveDnsResolver {
             }
 
             if (config.isDebugEnabled()) {
-                LOGGER.info(String.format("Query to %s completed in %d ms",
+                log.info(String.format("Query to %s completed in %d ms",
                         nameserver, System.currentTimeMillis() - queryStartTime));
             }
             DnsResponse response = parseFullResponse(Arrays.copyOf(buf, packet.getLength()), request);
@@ -333,7 +335,7 @@ public class RecursiveDnsResolver {
         for (String label : labels) {
             byte[] bytes = label.getBytes(StandardCharsets.ISO_8859_1);
             if (bytes.length == 0 || bytes.length > 63) {
-                throw new IllegalArgumentException("Invalid DNS label in name: " + question.name());
+                throw new DnsException(DnsException.FORMERR, "Invalid DNS label in name: " + question.name());
             }
             buffer.put((byte) bytes.length);
             buffer.put(bytes);
@@ -417,7 +419,7 @@ public class RecursiveDnsResolver {
             return response;
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to parse DNS response", e);
+            log.warn("Failed to parse DNS response", e);
             return null;
         }
     }
@@ -585,7 +587,7 @@ public class RecursiveDnsResolver {
             if ((labelLength & 0xC0) == 0xC0) {
                 // Bound the hops so a pointer loop cannot hang the resolver
                 if (position + 1 >= data.length || ++jumps > MAX_POINTER_JUMPS) {
-                    throw new IllegalArgumentException("Bad compression pointer");
+                    throw new DnsException(DnsException.SERVFAIL, "Bad compression pointer");
                 }
                 if (!jumped) {
                     originalPosition = position + 2;
@@ -663,9 +665,9 @@ public class RecursiveDnsResolver {
      * Shutdown the resolver and cleanup resources
      */
     public void shutdown() {
-        LOGGER.info("Shutting down recursive DNS resolver...");
+        log.info("Shutting down recursive DNS resolver...");
         cache.shutdown();
-        LOGGER.info("Recursive DNS resolver shutdown completed");
+        log.info("Recursive DNS resolver shutdown completed");
     }
 
     /**

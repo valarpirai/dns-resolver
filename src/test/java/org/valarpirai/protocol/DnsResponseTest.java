@@ -277,6 +277,6 @@ class DnsResponseTest {
     void testToBytesRejectsEmptyLabel() {
         DnsResponse response = new DnsResponse();
         response.getQuestions().add(DnsQuestion.builder().name("a..b").type(1).qclass(1).build());
-        assertThrows(IllegalArgumentException.class, response::toBytes);
+        assertThrows(DnsException.class, response::toBytes);
     }
 }

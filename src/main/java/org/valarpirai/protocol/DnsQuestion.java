@@ -1,9 +1,12 @@
 package org.valarpirai.protocol;
 
+import lombok.Builder;
+
 /**
  * DNS Question section
  * Contains the domain name being queried and the query type/class
  */
+@Builder
 public record DnsQuestion(
         String name,      // Domain name (e.g., "example.com")
         int type,         // Query type (e.g., 1=A, 28=AAAA)
@@ -13,25 +16,6 @@ public record DnsQuestion(
     public DnsQuestion {
         if (name == null || name.isEmpty()) {
             throw new IllegalArgumentException("Domain name cannot be null or empty");
-        }
-    }
-
-    // Builder pattern for Records
-    public static Builder builder() {
-        return new Builder();
-    }
-
-    public static class Builder {
-        private String name;
-        private int type;
-        private int qclass;
-
-        public Builder name(String name) { this.name = name; return this; }
-        public Builder type(int type) { this.type = type; return this; }
-        public Builder qclass(int qclass) { this.qclass = qclass; return this; }
-
-        public DnsQuestion build() {
-            return new DnsQuestion(name, type, qclass);
         }
     }
 

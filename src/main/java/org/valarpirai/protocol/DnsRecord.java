@@ -1,8 +1,11 @@
 package org.valarpirai.protocol;
 
+import lombok.Builder;
+
 /**
  * DNS Resource Record (Answer/Authority/Additional)
  */
+@Builder
 public record DnsRecord(
         String name,       // Domain name
         int type,          // Record type (A, AAAA, CNAME, etc.)
@@ -19,37 +22,6 @@ public record DnsRecord(
         // Auto-calculate rdlength from rdata
         if (rdata != null) {
             rdlength = rdata.length;
-        }
-    }
-
-    // Builder pattern for Records
-    public static Builder builder() {
-        return new Builder();
-    }
-
-    public static class Builder {
-        private String name;
-        private int type;
-        private int rclass;
-        private int ttl;
-        private int rdlength;
-        private byte[] rdata;
-
-        public Builder name(String name) { this.name = name; return this; }
-        public Builder type(int type) { this.type = type; return this; }
-        public Builder rclass(int rclass) { this.rclass = rclass; return this; }
-        public Builder ttl(int ttl) { this.ttl = ttl; return this; }
-        public Builder rdlength(int rdlength) { this.rdlength = rdlength; return this; }
-        public Builder rdata(byte[] rdata) {
-            this.rdata = rdata;
-            if (rdata != null) {
-                this.rdlength = rdata.length;
-            }
-            return this;
-        }
-
-        public DnsRecord build() {
-            return new DnsRecord(name, type, rclass, ttl, rdlength, rdata);
         }
     }
 

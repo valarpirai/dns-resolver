@@ -38,7 +38,7 @@ public class DnsRequest {
      */
     public static DnsRequest parse(byte[] data) {
         if (data == null || data.length < 12) {
-            throw new IllegalArgumentException("Invalid DNS query: too short");
+            throw new DnsException(DnsException.FORMERR, "Invalid DNS query: too short");
         }
 
         DnsRequest request = new DnsRequest();

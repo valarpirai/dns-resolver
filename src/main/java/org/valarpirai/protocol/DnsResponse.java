@@ -178,7 +178,7 @@ public class DnsResponse {
         for (String label : labels) {
             byte[] bytes = label.getBytes(StandardCharsets.ISO_8859_1);
             if (bytes.length == 0 || bytes.length > 63) {
-                throw new IllegalArgumentException("Invalid DNS label in name: " + name);
+                throw new DnsException(DnsException.FORMERR, "Invalid DNS label in name: " + name);
             }
             buffer.put((byte) bytes.length);
             buffer.put(bytes);

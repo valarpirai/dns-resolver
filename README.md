@@ -261,10 +261,10 @@ dns-resolver/
 │   │   │   │   ├── DnsResponse.java             # Response DTO
 │   │   │   │   └── DnsRecord.java               # Resource record DTO
 │   │   │   └── util/
-│   │   │       ├── Configuration.java           # Config manager
-│   │   │       └── SingleLineFormatter.java     # Log formatter
+│   │   │       └── Configuration.java           # Config manager
 │   │   └── resources/
-│   │       └── application.properties            # Default config
+│   │       ├── application.properties            # Default config
+│   │       └── logback.xml                       # Logging config
 │   └── test/
 │       └── java/org/valarpirai/
 │           ├── cache/

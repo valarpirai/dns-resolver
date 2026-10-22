@@ -1,19 +1,18 @@
 package org.valarpirai.util;
 
+import lombok.extern.slf4j.Slf4j;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 
 /**
  * Configuration manager that loads settings from properties file
  * and allows environment variable overrides
  */
+@Slf4j
 public class Configuration {
-    private static final Logger LOGGER = Logger.getLogger(Configuration.class.getName());
     private static final String PROPERTIES_FILE = "application.properties";
     private static final String ENV_PREFIX = "DNS_";
 
@@ -32,15 +31,15 @@ public class Configuration {
 
         try (InputStream input = getClass().getClassLoader().getResourceAsStream(PROPERTIES_FILE)) {
             if (input == null) {
-                LOGGER.warning("Unable to find " + PROPERTIES_FILE + ", using defaults");
+                log.warn("Unable to find " + PROPERTIES_FILE + ", using defaults");
                 setDefaults(props);
                 return props;
             }
 
             props.load(input);
-            LOGGER.info("Loaded configuration from " + PROPERTIES_FILE);
+            log.info("Loaded configuration from " + PROPERTIES_FILE);
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Error loading properties file, using defaults", e);
+            log.warn("Error loading properties file, using defaults", e);
             setDefaults(props);
         }
 
@@ -79,7 +78,7 @@ public class Configuration {
         if (envValue != null) {
             // Getters run per query; log each override once
             if (loggedEnvKeys.add(envKey)) {
-                LOGGER.info("Using environment variable " + envKey + " = " + envValue);
+                log.info("Using environment variable " + envKey + " = " + envValue);
             }
             return envValue;
         }
@@ -100,7 +99,7 @@ public class Configuration {
         try {
             return Integer.parseInt(value);
         } catch (NumberFormatException e) {
-            LOGGER.warning("Invalid integer value for " + key + ": " + value + ", using default: " + defaultValue);
+            log.warn("Invalid integer value for " + key + ": " + value + ", using default: " + defaultValue);
             return defaultValue;
         }
     }
@@ -117,7 +116,7 @@ public class Configuration {
         try {
             return Long.parseLong(value);
         } catch (NumberFormatException e) {
-            LOGGER.warning("Invalid long value for " + key + ": " + value + ", using default: " + defaultValue);
+            log.warn("Invalid long value for " + key + ": " + value + ", using default: " + defaultValue);
             return defaultValue;
         }
     }
@@ -187,12 +186,12 @@ public class Configuration {
      * Print current configuration
      */
     public void printConfiguration() {
-        LOGGER.info("=== DNS Server Configuration ===");
-        LOGGER.info("Server Port: " + getServerPort());
-        LOGGER.info("Bind Address: " + getBindAddress());
-        LOGGER.info("Buffer Size: " + getBufferSize());
-        LOGGER.info("Selector Timeout: " + getSelectorTimeout());
-        LOGGER.info("Debug Mode: " + isDebugEnabled());
-        LOGGER.info("================================");
+        log.info("=== DNS Server Configuration ===");
+        log.info("Server Port: " + getServerPort());
+        log.info("Bind Address: " + getBindAddress());
+        log.info("Buffer Size: " + getBufferSize());
+        log.info("Selector Timeout: " + getSelectorTimeout());
+        log.info("Debug Mode: " + isDebugEnabled());
+        log.info("================================");
     }
 }

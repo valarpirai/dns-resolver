@@ -1,5 +1,6 @@
 package org.valarpirai.server;
 
+import lombok.extern.slf4j.Slf4j;
 import lombok.Getter;
 import org.valarpirai.util.Configuration;
 import org.valarpirai.resolver.RecursiveDnsResolver;
@@ -16,14 +17,12 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 
 /**
  * Non-blocking UDP DNS Server using Java NIO
  */
+@Slf4j
 public class DnsServer {
-    private static final Logger LOGGER = Logger.getLogger(DnsServer.class.getName());
 
     private final Configuration config;
     private final RecursiveDnsResolver resolver;
@@ -34,6 +33,7 @@ public class DnsServer {
     private final int bufferSize;
     private final int selectorTimeout;
     private DatagramChannel channel;
+    private DnsQueryHandler handler;
     private Selector selector;
     private final ExecutorService workers;
 
@@ -63,7 +63,7 @@ public class DnsServer {
      * Start the DNS server
      */
     public void start() throws IOException {
-        LOGGER.info("Starting DNS server on " + bindAddress + ":" + port);
+        log.info("Starting DNS server on " + bindAddress + ":" + port);
 
         // Open a non-blocking DatagramChannel
         channel = DatagramChannel.open();
@@ -77,10 +77,11 @@ public class DnsServer {
         selector = Selector.open();
         channel.register(selector, SelectionKey.OP_READ);
 
+        handler = new DnsQueryHandler(channel, resolver, config);
         running = true;
-        LOGGER.info("DNS server started successfully on " + bindAddress + ":" + port);
+        log.info("DNS server started successfully on " + bindAddress + ":" + port);
         if (config.isDebugEnabled()) {
-            LOGGER.info("Debug mode is enabled");
+            log.info("Debug mode is enabled");
         }
 
         // Main event loop
@@ -114,7 +115,7 @@ public class DnsServer {
                 }
             } catch (IOException e) {
                 if (running) {
-                    LOGGER.log(Level.SEVERE, "Error in event loop", e);
+                    log.error("Error in event loop", e);
                 }
             }
         }
@@ -137,14 +138,14 @@ public class DnsServer {
         int bytesReceived = buffer.remaining();
 
         if (config.isDebugEnabled()) {
-            LOGGER.info(String.format("Received %d bytes from %s:%d",
+            log.info(String.format("Received %d bytes from %s:%d",
                     bytesReceived, clientAddress.getHostString(), clientAddress.getPort()));
 
             // Log the raw data (first 12 bytes is DNS header)
             if (bytesReceived >= 12) {
                 byte[] data = new byte[Math.min(bytesReceived, 50)];
                 buffer.get(data);
-                LOGGER.info("DNS Query Header (hex): " + bytesToHex(data));
+                log.info("DNS Query Header (hex): " + DnsLogFormat.bytesToHex(data));
                 buffer.rewind();
             }
         }
@@ -152,105 +153,14 @@ public class DnsServer {
         // Copy out of the shared buffer, then resolve and reply on a worker thread
         byte[] query = new byte[buffer.remaining()];
         buffer.get(query);
-        workers.execute(() -> processDnsQuery(query, clientAddress));
-    }
-
-    /**
-     * Process DNS query and send response
-     */
-    private void processDnsQuery(byte[] query, InetSocketAddress clientAddress) {
-        long requestStartTime = System.currentTimeMillis();
-        DnsRequest request = null;
-
-        try {
-            // Parse DNS request using DTO
-            long parseStartTime = System.currentTimeMillis();
-            request = DnsRequest.parse(query);
-            long parseTime = System.currentTimeMillis() - parseStartTime;
-
-            // Never answer a response packet: two servers would ping-pong, and it enables reflection
-            if (request.getHeader().qr()) {
-                return;
-            }
-
-            // Resolve the query using recursive resolver
-            long resolveStartTime = System.currentTimeMillis();
-            DnsResponse response = request.getHeader().opcode() != 0
-                    ? errorResponse(request, 4) // NOTIMP
-                    : resolver.resolve(request);
-            long resolveTime = System.currentTimeMillis() - resolveStartTime;
-
-            if (config.isDebugEnabled()) {
-                LOGGER.info(String.format("Response: %d answer(s), RCODE: %d",
-                        response.getAnswers().size(), response.getHeader().rcode()));
-
-                if (!response.getAnswers().isEmpty()) {
-                    LOGGER.info(";; ANSWER SECTION:");
-                    for (DnsRecord answer : response.getAnswers()) {
-                        LOGGER.info(String.format("%-30s %-6d %-5s %-6s %s",
-                                answer.name(),
-                                answer.ttl(),
-                                "IN",
-                                answer.getTypeName(),
-                                formatRecordData(answer)));
-                    }
-                }
-            }
-
-            // Convert response to bytes
-            long serializeStartTime = System.currentTimeMillis();
-            byte[] responseBytes = response.toBytes(request.getUdpPayloadSize());
-            ByteBuffer responseBuffer = ByteBuffer.wrap(responseBytes);
-            long serializeTime = System.currentTimeMillis() - serializeStartTime;
-
-            // Send response back to client
-            long sendStartTime = System.currentTimeMillis();
-            int bytesSent = channel.send(responseBuffer, clientAddress);
-            long sendTime = System.currentTimeMillis() - sendStartTime;
-
-            long totalTime = System.currentTimeMillis() - requestStartTime;
-
-            // Get query name for logging
-            String queryName = request.getQuestions().isEmpty() ? "UNKNOWN" : request.getQuestions().get(0).name();
-            String queryType = request.getQuestions().isEmpty() ? "?" : request.getQuestions().get(0).getTypeName();
-
-            // Always log request summary with timing and statistics
-            String cacheStatus = response.isCacheHit() ? "HIT" : "MISS";
-            LOGGER.info(String.format("%s %s | %d ms (parse:%d resolve:%d serialize:%d send:%d) | cache:%s queries:%d depth:%d answers:%d | %s:%d",
-                    queryName, queryType,
-                    totalTime, parseTime, resolveTime, serializeTime, sendTime,
-                    cacheStatus, response.getQueriesMade(), response.getMaxDepthReached(),
-                    response.getAnswers().size(),
-                    clientAddress.getHostString(), clientAddress.getPort()));
-
-            if (config.isDebugEnabled()) {
-                LOGGER.info(String.format("Sent %d bytes response to %s:%d",
-                        bytesSent, clientAddress.getHostString(), clientAddress.getPort()));
-            }
-        } catch (Exception e) {
-            long totalTime = System.currentTimeMillis() - requestStartTime;
-            LOGGER.log(Level.WARNING, "Error processing DNS query from " + clientAddress + " after " + totalTime + " ms", e);
-            if (request != null) {
-                try {
-                    channel.send(ByteBuffer.wrap(errorResponse(request, 2).toBytes()), clientAddress); // SERVFAIL
-                } catch (Exception sendError) {
-                    LOGGER.log(Level.FINE, "Could not send SERVFAIL to " + clientAddress, sendError);
-                }
-            }
-        }
-    }
-
-    private DnsResponse errorResponse(DnsRequest request, int rcode) {
-        DnsResponse response = new DnsResponse(request);
-        response.setHeader(response.getHeader().withRcode(rcode));
-        return response;
+        workers.execute(() -> handler.handle(query, clientAddress));
     }
 
     /**
      * Stop the DNS server
      */
     public void stop() {
-        LOGGER.info("Stopping DNS server...");
+        log.info("Stopping DNS server...");
         running = false;
         workers.shutdownNow();
 
@@ -267,91 +177,9 @@ public class DnsServer {
                 resolver.shutdown();
             }
 
-            LOGGER.info("DNS server stopped successfully");
+            log.info("DNS server stopped successfully");
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Error stopping DNS server", e);
+            log.error("Error stopping DNS server", e);
         }
-    }
-
-    /**
-     * Utility method to convert bytes to hex string
-     */
-    private String bytesToHex(byte[] bytes) {
-        StringBuilder result = new StringBuilder();
-        for (byte b : bytes) {
-            result.append(String.format("%02X ", b));
-        }
-        return result.toString().trim();
-    }
-
-    /**
-     * Format DNS record data for logging
-     */
-    private String formatRecordData(DnsRecord record) {
-        if (record.rdata() == null || record.rdata().length == 0) {
-            return "empty";
-        }
-
-        return switch (record.type()) {
-            case 1 -> {  // A record (IPv4)
-                if (record.rdata().length == 4) {
-                    yield String.format("%d.%d.%d.%d",
-                            record.rdata()[0] & 0xFF,
-                            record.rdata()[1] & 0xFF,
-                            record.rdata()[2] & 0xFF,
-                            record.rdata()[3] & 0xFF);
-                }
-                yield bytesToHex(record.rdata());
-            }
-            case 28 -> { // AAAA record (IPv6)
-                if (record.rdata().length == 16) {
-                    StringBuilder ipv6 = new StringBuilder();
-                    for (int i = 0; i < 16; i += 2) {
-                        if (i > 0) ipv6.append(":");
-                        ipv6.append(String.format("%02x%02x",
-                                record.rdata()[i] & 0xFF,
-                                record.rdata()[i + 1] & 0xFF));
-                    }
-                    yield ipv6.toString();
-                }
-                yield bytesToHex(record.rdata());
-            }
-            case 5, 2, 12 -> { // CNAME, NS, PTR (domain names)
-                try {
-                    StringBuilder name = new StringBuilder();
-                    int pos = 0;
-                    while (pos < record.rdata().length) {
-                        int len = record.rdata()[pos] & 0xFF;
-                        if (len == 0) break;
-                        if ((len & 0xC0) == 0xC0) break; // Pointer
-                        pos++;
-                        if (name.length() > 0) name.append(".");
-                        for (int i = 0; i < len && pos < record.rdata().length; i++) {
-                            name.append((char) record.rdata()[pos++]);
-                        }
-                    }
-                    yield name.toString();
-                } catch (Exception e) {
-                    yield bytesToHex(record.rdata());
-                }
-            }
-            case 16 -> { // TXT record
-                try {
-                    StringBuilder txt = new StringBuilder("\"");
-                    int pos = 0;
-                    while (pos < record.rdata().length) {
-                        int len = record.rdata()[pos++] & 0xFF;
-                        for (int i = 0; i < len && pos < record.rdata().length; i++) {
-                            txt.append((char) record.rdata()[pos++]);
-                        }
-                    }
-                    txt.append("\"");
-                    yield txt.toString();
-                } catch (Exception e) {
-                    yield bytesToHex(record.rdata());
-                }
-            }
-            default -> bytesToHex(record.rdata());
-        };
     }
 }

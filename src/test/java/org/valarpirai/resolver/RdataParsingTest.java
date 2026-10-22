@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
+import org.valarpirai.protocol.DnsException;
 import org.valarpirai.util.Configuration;
 
 class RdataParsingTest {
@@ -38,6 +39,6 @@ class RdataParsingTest {
         loop[12] = (byte) 0xC0;
         loop[13] = 12; // points at itself
         assertTimeoutPreemptively(java.time.Duration.ofSeconds(2),
-                () -> assertThrows(IllegalArgumentException.class, () -> resolver.parseDomainName(loop, 12)));
+                () -> assertThrows(DnsException.class, () -> resolver.parseDomainName(loop, 12)));
     }
 }
