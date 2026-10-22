@@ -191,6 +191,17 @@ public class DnsServer {
     }
 
     /**
+     * Utility method to convert bytes to hex string
+     */
+    private String bytesToHex(byte[] bytes) {
+        StringBuilder result = new StringBuilder();
+        for (byte b : bytes) {
+            result.append(String.format("%02X ", b));
+        }
+        return result.toString().trim();
+    }
+
+    /**
      * Check if server is running
      */
     public boolean isRunning() {
