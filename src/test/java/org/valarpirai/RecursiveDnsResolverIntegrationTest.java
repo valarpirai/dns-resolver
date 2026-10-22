@@ -248,14 +248,14 @@ class RecursiveDnsResolverIntegrationTest {
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void testResolveSubdomain() {
-        // Test resolving a subdomain
-        DnsRequest request = createDnsRequest("www.example.com", 1);
+        // Test resolving a well-known subdomain
+        // Using www.google.com instead which is more reliable
+        DnsRequest request = createDnsRequest("www.google.com", 1);
         DnsResponse response = resolver.resolve(request);
 
         assertNotNull(response, "Response should not be null");
-        // Note: www.example.com typically returns NXDOMAIN or redirect
-        // We just verify we get a response
         assertNotNull(response.getHeader(), "Response should have header");
+        // Response may have answers or CNAME chain - either is fine
     }
 
     @Test
