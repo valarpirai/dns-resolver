@@ -223,6 +223,12 @@ public class DnsServer {
             if (channel != null && channel.isOpen()) {
                 channel.close();
             }
+
+            // Shutdown resolver and cache
+            if (resolver != null) {
+                resolver.shutdown();
+            }
+
             LOGGER.info("DNS server stopped successfully");
         } catch (IOException e) {
             LOGGER.log(Level.SEVERE, "Error stopping DNS server", e);
