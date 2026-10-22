@@ -19,17 +19,17 @@ class RdataParsingTest {
         System.arraycopy(name, 0, packet, 12, name.length);
         System.arraycopy(rdata, 0, packet, 12 + name.length, rdata.length);
 
-        byte[] expanded = resolver.expandRdata(packet, 12 + name.length, rdata.length, 5);
+        byte[] expanded = DnsWire.expandRdata(packet, 12 + name.length, rdata.length, 5);
 
         // Standalone, so the name parses without the original packet
-        assertEquals("www.example.com", resolver.parseDomainName(expanded, 0).name);
+        assertEquals("www.example.com", DnsWire.parseDomainName(expanded, 0).name);
         assertTrue(new String(expanded, StandardCharsets.ISO_8859_1).indexOf(0xC0) < 0);
     }
 
     @Test
     void keepsMxPreferenceBeforeName() {
         byte[] rdata = {0, 10, 4, 'm', 'a', 'i', 'l', 0};
-        byte[] expanded = resolver.expandRdata(rdata, 0, rdata.length, 15);
+        byte[] expanded = DnsWire.expandRdata(rdata, 0, rdata.length, 15);
         assertArrayEquals(rdata, expanded);
     }
 
@@ -39,6 +39,6 @@ class RdataParsingTest {
         loop[12] = (byte) 0xC0;
         loop[13] = 12; // points at itself
         assertTimeoutPreemptively(java.time.Duration.ofSeconds(2),
-                () -> assertThrows(DnsException.class, () -> resolver.parseDomainName(loop, 12)));
+                () -> assertThrows(DnsException.class, () -> DnsWire.parseDomainName(loop, 12)));
     }
 }
