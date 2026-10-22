@@ -46,7 +46,7 @@ public class DnsResolver {
         DnsQuestion question = request.getQuestions().get(0);
 
         if (config.isDebugEnabled()) {
-            LOGGER.info("Resolving: " + question.getName() + " (Type: " + question.getTypeName() + ")");
+            LOGGER.info("Resolving: " + question.name() + " (Type: " + question.getTypeName() + ")");
         }
 
         // Try each upstream server
@@ -55,7 +55,7 @@ public class DnsResolver {
                 DnsResponse response = queryUpstream(request, upstreamServer);
                 if (response != null) {
                     if (config.isDebugEnabled()) {
-                        LOGGER.info("Resolved " + question.getName() + " with " +
+                        LOGGER.info("Resolved " + question.name() + " with " +
                                 response.getAnswers().size() + " answer(s) from " + upstreamServer);
                     }
                     return response;
@@ -66,7 +66,7 @@ public class DnsResolver {
         }
 
         // All upstream servers failed
-        LOGGER.warning("All upstream servers failed for query: " + question.getName());
+        LOGGER.warning("All upstream servers failed for query: " + question.name());
         return createErrorResponse(request, 2); // Server failure
     }
 
@@ -154,10 +154,10 @@ public class DnsResolver {
                     .build();
 
             // Skip questions section (we already have it from the original request)
-            int position = skipQuestions(data, 12, header.getQdcount());
+            int position = skipQuestions(data, 12, header.qdcount());
 
             // Parse answer records
-            for (int i = 0; i < header.getAncount() && position < data.length; i++) {
+            for (int i = 0; i < header.ancount() && position < data.length; i++) {
                 try {
                     ParseResult result = parseResourceRecord(data, position);
                     if (result != null) {
@@ -318,7 +318,7 @@ public class DnsResolver {
      */
     private DnsResponse createErrorResponse(DnsRequest request, int rcode) {
         DnsResponse response = new DnsResponse(request);
-        response.getHeader().setRcode(rcode);
+        response.setHeader(response.getHeader().withRcode(rcode));
         return response;
     }
 
