@@ -10,7 +10,6 @@ import org.junit.jupiter.api.Timeout;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -35,6 +34,17 @@ class DnsCacheIntegrationTest {
         if (cache != null) {
             cache.shutdown();
         }
+    }
+
+    @Test
+    void testCachedTtlCountsDown() throws InterruptedException {
+        cache = new DnsCache(testConfig);
+        cache.put("aged.example.com", 1, List.of(DnsRecord.createARecord("aged.example.com", "1.2.3.4", 60)));
+
+        Thread.sleep(2100);
+
+        int ttl = cache.get("aged.example.com", 1).get(0).ttl();
+        assertTrue(ttl <= 58, "TTL should have aged, was " + ttl);
     }
 
     @Test

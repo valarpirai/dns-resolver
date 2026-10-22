@@ -12,6 +12,10 @@ import java.nio.channels.DatagramChannel;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.util.Iterator;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -31,6 +35,7 @@ public class DnsServer {
     private final int selectorTimeout;
     private DatagramChannel channel;
     private Selector selector;
+    private final ExecutorService workers;
 
     @Getter
     private volatile boolean running;
@@ -47,6 +52,11 @@ public class DnsServer {
         this.bufferSize = config.getBufferSize();
         this.selectorTimeout = config.getSelectorTimeout();
         this.running = false;
+
+        // Resolution blocks on upstream I/O, so it runs off the event loop; excess queries are dropped (UDP)
+        int threads = config.getInt("server.worker.threads", 32);
+        this.workers = new ThreadPoolExecutor(threads, threads, 0, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(1000), new ThreadPoolExecutor.DiscardPolicy());
     }
 
     /**
@@ -139,30 +149,35 @@ public class DnsServer {
             }
         }
 
-        // Process the DNS query and send response
-        processDnsQuery(buffer, clientAddress);
+        // Copy out of the shared buffer, then resolve and reply on a worker thread
+        byte[] query = new byte[buffer.remaining()];
+        buffer.get(query);
+        workers.execute(() -> processDnsQuery(query, clientAddress));
     }
 
     /**
      * Process DNS query and send response
      */
-    private void processDnsQuery(ByteBuffer queryBuffer, InetSocketAddress clientAddress) throws IOException {
+    private void processDnsQuery(byte[] query, InetSocketAddress clientAddress) {
         long requestStartTime = System.currentTimeMillis();
-
-        byte[] query = new byte[queryBuffer.remaining()];
-        queryBuffer.get(query);
+        DnsRequest request = null;
 
         try {
             // Parse DNS request using DTO
             long parseStartTime = System.currentTimeMillis();
-            DnsRequest request = DnsRequest.parse(query);
+            request = DnsRequest.parse(query);
             long parseTime = System.currentTimeMillis() - parseStartTime;
 
-            // Removed verbose query logging - details are in the final summary
+            // Never answer a response packet: two servers would ping-pong, and it enables reflection
+            if (request.getHeader().qr()) {
+                return;
+            }
 
             // Resolve the query using recursive resolver
             long resolveStartTime = System.currentTimeMillis();
-            DnsResponse response = resolver.resolve(request);
+            DnsResponse response = request.getHeader().opcode() != 0
+                    ? errorResponse(request, 4) // NOTIMP
+                    : resolver.resolve(request);
             long resolveTime = System.currentTimeMillis() - resolveStartTime;
 
             if (config.isDebugEnabled()) {
@@ -184,7 +199,7 @@ public class DnsServer {
 
             // Convert response to bytes
             long serializeStartTime = System.currentTimeMillis();
-            byte[] responseBytes = response.toBytes();
+            byte[] responseBytes = response.toBytes(request.getUdpPayloadSize());
             ByteBuffer responseBuffer = ByteBuffer.wrap(responseBytes);
             long serializeTime = System.currentTimeMillis() - serializeStartTime;
 
@@ -215,7 +230,20 @@ public class DnsServer {
         } catch (Exception e) {
             long totalTime = System.currentTimeMillis() - requestStartTime;
             LOGGER.log(Level.WARNING, "Error processing DNS query from " + clientAddress + " after " + totalTime + " ms", e);
+            if (request != null) {
+                try {
+                    channel.send(ByteBuffer.wrap(errorResponse(request, 2).toBytes()), clientAddress); // SERVFAIL
+                } catch (Exception sendError) {
+                    LOGGER.log(Level.FINE, "Could not send SERVFAIL to " + clientAddress, sendError);
+                }
+            }
         }
+    }
+
+    private DnsResponse errorResponse(DnsRequest request, int rcode) {
+        DnsResponse response = new DnsResponse(request);
+        response.setHeader(response.getHeader().withRcode(rcode));
+        return response;
     }
 
     /**
@@ -224,6 +252,7 @@ public class DnsServer {
     public void stop() {
         LOGGER.info("Stopping DNS server...");
         running = false;
+        workers.shutdownNow();
 
         try {
             if (selector != null && selector.isOpen()) {

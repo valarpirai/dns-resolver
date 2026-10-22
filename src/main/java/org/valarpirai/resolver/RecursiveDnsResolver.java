@@ -4,13 +4,21 @@ import org.valarpirai.protocol.*;
 import org.valarpirai.util.Configuration;
 import org.valarpirai.cache.DnsCache;
 
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.SocketTimeoutException;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
 import java.nio.ByteBuffer;
-import java.nio.channels.DatagramChannel;
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -22,6 +30,8 @@ import java.util.logging.Logger;
 public class RecursiveDnsResolver {
     private static final Logger LOGGER = Logger.getLogger(RecursiveDnsResolver.class.getName());
     private static final int BUFFER_SIZE = 4096;
+    private static final int MAX_POINTER_JUMPS = 32;
+    private static final SecureRandom RANDOM = new SecureRandom();
 
     private final List<String> rootServers;
     private final DnsCache cache;
@@ -105,7 +115,7 @@ public class RecursiveDnsResolver {
 
             DnsResponse response = new DnsResponse(request);
             response.setHeader(response.getHeader()
-                    .withRcode(answers.isEmpty() ? 3 : 0)  // NXDOMAIN or NOERROR
+                    .withRcode(answers.isEmpty() ? emptyAnswerRcode(stats) : 0)
                     .withRa(true));
             response.setCacheHit(false);
             response.setQueriesMade(stats.queriesMade);
@@ -152,43 +162,44 @@ public class RecursiveDnsResolver {
                 DnsResponse response = queryNameserver(qname, qtype, ns);
                 if (response == null) continue;
 
-                // Check if we got answers
+                int rcode = response.getHeader().rcode();
+                if (rcode != 0 && rcode != 3) continue; // SERVFAIL, REFUSED etc: try the next server
+
                 if (!response.getAnswers().isEmpty()) {
                     if (config.isDebugEnabled()) {
                         LOGGER.info(String.format("[Depth %d] Got %d answer(s) from %s",
                                 depth, response.getAnswers().size(), ns));
                     }
 
-                    // Handle CNAME records
-                    DnsRecord firstAnswer = response.getAnswers().get(0);
-                    if (firstAnswer.type() == 5 && qtype != 5) { // CNAME
-                        String cname = parseDomainFromRdata(firstAnswer.rdata());
-                        if (cname != null && !cname.isEmpty()) {
-                            if (config.isDebugEnabled()) {
-                                LOGGER.info(String.format("[Depth %d] Following CNAME: %s -> %s",
-                                        depth, qname, cname));
-                            }
-                            // Recursively resolve the CNAME
-                            List<DnsRecord> cnameAnswers = resolveRecursive(cname, qtype, rootServers, depth + 1, stats);
-                            // Combine CNAME with final answers
-                            List<DnsRecord> allAnswers = new ArrayList<>(response.getAnswers());
-                            allAnswers.addAll(cnameAnswers);
-                            return allAnswers;
-                        }
+                    List<DnsRecord> answers = response.getAnswers();
+                    String cnameTarget = qtype == 5 ? null : unresolvedCnameTarget(qname, qtype, answers);
+                    if (cnameTarget == null) {
+                        return answers;
                     }
 
-                    return response.getAnswers();
+                    if (config.isDebugEnabled()) {
+                        LOGGER.info(String.format("[Depth %d] Following CNAME: %s -> %s", depth, qname, cnameTarget));
+                    }
+                    List<DnsRecord> allAnswers = new ArrayList<>(answers);
+                    allAnswers.addAll(resolveRecursive(cnameTarget, qtype, rootServers, depth + 1, stats));
+                    return allAnswers;
                 }
 
                 // Check for referral (authority/additional sections with NS records)
-                List<String> referralNS = extractReferralNameservers(response);
+                List<String> referralNS = extractReferralNameservers(response, depth, stats);
                 if (!referralNS.isEmpty()) {
                     if (config.isDebugEnabled()) {
                         LOGGER.info(String.format("[Depth %d] Got referral to %d nameserver(s)",
                                 depth, referralNS.size()));
                     }
+                    // The child zone's servers were already all tried; siblings would return the same referral
                     return resolveRecursive(qname, qtype, referralNS, depth + 1, stats);
                 }
+
+                // Authoritative empty answer: NXDOMAIN (rcode 3) or NODATA (rcode 0)
+                stats.definitive = true;
+                stats.nxdomain = rcode == 3;
+                return new ArrayList<>();
 
             } catch (SocketTimeoutException e) {
                 LOGGER.warning(String.format("Nameserver %s timed out after %d ms", ns, timeoutMs));
@@ -201,69 +212,103 @@ public class RecursiveDnsResolver {
     }
 
     /**
+     * Follow the CNAME chain in an answer set
+     *
+     * @param qname   the name that was asked for
+     * @param qtype   the type that was asked for
+     * @param answers answer records from one upstream response
+     * @return the name still to be resolved, or null if the answers already hold the wanted type
+     */
+    private String unresolvedCnameTarget(String qname, int qtype, List<DnsRecord> answers) {
+        String current = qname;
+        String target = null;
+        for (int hops = 0; hops <= maxDepth; hops++) {
+            final String name = current;
+            DnsRecord cname = answers.stream()
+                    .filter(r -> r.type() == 5 && r.name().equalsIgnoreCase(name))
+                    .findFirst().orElse(null);
+            if (cname == null) break;
+            String next = parseDomainFromRdata(cname.rdata());
+            if (next == null || next.isEmpty()) break;
+            target = current = next;
+        }
+        if (target == null) return null;
+
+        // The upstream server may already have included the final records
+        final String last = target;
+        boolean resolved = answers.stream().anyMatch(r -> r.type() == qtype && r.name().equalsIgnoreCase(last));
+        return resolved ? null : target;
+    }
+
+    /**
      * Query a specific nameserver
      */
     private DnsResponse queryNameserver(String qname, int qtype, String nameserver) throws IOException {
-        DatagramChannel channel = null;
+        int id = RANDOM.nextInt(65536);
+        DnsRequest request = DnsRequest.builder()
+                .header(DnsHeader.builder().id(id).qr(false).rd(false).qdcount(1).build())
+                .build();
+        request.addQuestion(DnsQuestion.builder().name(qname).type(qtype).qclass(1).build());
+        byte[] queryBytes = buildQuery(request);
 
-        try {
-            // Create DNS query
-            DnsRequest request = DnsRequest.builder()
-                    .header(DnsHeader.builder()
-                            .id((int) (Math.random() * 65535))
-                            .qr(false)
-                            .rd(false) // No recursion desired for iterative queries
-                            .qdcount(1)
-                            .build())
-                    .build();
+        InetSocketAddress serverSocket = new InetSocketAddress(InetAddress.getByName(nameserver), 53);
+        long queryStartTime = System.currentTimeMillis();
 
-            DnsQuestion question = DnsQuestion.builder()
-                    .name(qname)
-                    .type(qtype)
-                    .qclass(1) // IN
-                    .build();
-            request.addQuestion(question);
+        // DatagramSocket honors setSoTimeout; DatagramChannel.receive does not
+        try (DatagramSocket socket = new DatagramSocket()) {
+            socket.setSoTimeout(timeoutMs);
+            socket.send(new DatagramPacket(queryBytes, queryBytes.length, serverSocket));
 
-            // Convert to bytes
-            byte[] queryBytes = buildQuery(request);
+            byte[] buf = new byte[BUFFER_SIZE];
+            DatagramPacket packet = new DatagramPacket(buf, buf.length);
+            long deadline = queryStartTime + timeoutMs;
 
-            // Send query
-            long queryStartTime = System.currentTimeMillis();
-            channel = DatagramChannel.open();
-            channel.configureBlocking(true);
-            channel.socket().setSoTimeout(timeoutMs);
+            // Ignore packets from other sources or with a wrong ID until the deadline
+            while (true) {
+                int remaining = (int) (deadline - System.currentTimeMillis());
+                if (remaining <= 0) {
+                    throw new SocketTimeoutException("No valid response from " + nameserver);
+                }
+                socket.setSoTimeout(remaining);
+                socket.receive(packet);
 
-            InetAddress serverAddress = InetAddress.getByName(nameserver);
-            InetSocketAddress serverSocket = new InetSocketAddress(serverAddress, 53);
+                boolean fromServer = serverSocket.getAddress().equals(packet.getAddress())
+                        && packet.getPort() == 53;
+                boolean idMatches = packet.getLength() >= 2
+                        && (((buf[0] & 0xFF) << 8) | (buf[1] & 0xFF)) == id;
+                if (fromServer && idMatches) {
+                    break;
+                }
+            }
 
-            ByteBuffer sendBuffer = ByteBuffer.wrap(queryBytes);
-            channel.send(sendBuffer, serverSocket);
-
-            // Receive response
-            ByteBuffer receiveBuffer = ByteBuffer.allocate(BUFFER_SIZE);
-            InetSocketAddress responseAddress = (InetSocketAddress) channel.receive(receiveBuffer);
-
-            long queryTime = System.currentTimeMillis() - queryStartTime;
             if (config.isDebugEnabled()) {
-                LOGGER.info(String.format("Query to %s completed in %d ms", nameserver, queryTime));
+                LOGGER.info(String.format("Query to %s completed in %d ms",
+                        nameserver, System.currentTimeMillis() - queryStartTime));
             }
-
-            if (responseAddress == null) {
-                LOGGER.warning(String.format("No response from %s (timed out after %d ms)", nameserver, timeoutMs));
-                return null;
+            DnsResponse response = parseFullResponse(Arrays.copyOf(buf, packet.getLength()), request);
+            if (response != null && response.getHeader().tc()) {
+                return queryNameserverTcp(queryBytes, serverSocket, request);
             }
+            return response;
+        }
+    }
 
-            receiveBuffer.flip();
-            byte[] responseBytes = new byte[receiveBuffer.remaining()];
-            receiveBuffer.get(responseBytes);
+    /**
+     * Retry a truncated UDP query over TCP (2-byte length prefix per RFC 1035)
+     */
+    private DnsResponse queryNameserverTcp(byte[] queryBytes, InetSocketAddress server, DnsRequest request) throws IOException {
+        try (Socket socket = new Socket()) {
+            socket.connect(server, timeoutMs);
+            socket.setSoTimeout(timeoutMs);
+            DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+            out.writeShort(queryBytes.length);
+            out.write(queryBytes);
+            out.flush();
 
-            // Parse response
+            DataInputStream in = new DataInputStream(socket.getInputStream());
+            byte[] responseBytes = new byte[in.readUnsignedShort()];
+            in.readFully(responseBytes);
             return parseFullResponse(responseBytes, request);
-
-        } finally {
-            if (channel != null && channel.isOpen()) {
-                channel.close();
-            }
         }
     }
 
@@ -275,7 +320,7 @@ public class RecursiveDnsResolver {
 
         // Header
         buffer.putShort((short) request.getHeader().id());
-        buffer.put((byte) 0x01); // Recursion desired
+        buffer.put((byte) (request.getHeader().rd() ? 0x01 : 0x00)); // Recursion desired
         buffer.put((byte) 0x00);
         buffer.putShort((short) 1); // 1 question
         buffer.putShort((short) 0); // 0 answers
@@ -286,8 +331,12 @@ public class RecursiveDnsResolver {
         DnsQuestion question = request.getQuestions().get(0);
         String[] labels = question.name().split("\\.");
         for (String label : labels) {
-            buffer.put((byte) label.length());
-            buffer.put(label.getBytes());
+            byte[] bytes = label.getBytes(StandardCharsets.ISO_8859_1);
+            if (bytes.length == 0 || bytes.length > 63) {
+                throw new IllegalArgumentException("Invalid DNS label in name: " + question.name());
+            }
+            buffer.put((byte) bytes.length);
+            buffer.put(bytes);
         }
         buffer.put((byte) 0); // End of name
 
@@ -313,6 +362,7 @@ public class RecursiveDnsResolver {
             DnsHeader header = DnsHeader.builder()
                     .id(((data[0] & 0xFF) << 8) | (data[1] & 0xFF))
                     .qr((data[2] & 0x80) != 0)
+                    .tc((data[2] & 0x02) != 0)
                     .rcode(data[3] & 0x0F)
                     .qdcount(((data[4] & 0xFF) << 8) | (data[5] & 0xFF))
                     .ancount(((data[6] & 0xFF) << 8) | (data[7] & 0xFF))
@@ -373,15 +423,26 @@ public class RecursiveDnsResolver {
     }
 
     /**
-     * Extract referral nameservers from authority and additional sections
+     * Extract referral nameserver addresses from the authority and additional sections.
+     * Glue is only trusted when it belongs to an NS record in the authority section.
      */
-    private List<String> extractReferralNameservers(DnsResponse response) {
-        List<String> nameservers = new ArrayList<>();
+    private List<String> extractReferralNameservers(DnsResponse response, int depth, ResolutionStats stats) {
+        List<String> nsNames = new ArrayList<>();
+        if (response.getAuthority() != null) {
+            for (DnsRecord record : response.getAuthority()) {
+                if (record.type() == 2) { // NS record
+                    String nsName = parseDomainFromRdata(record.rdata());
+                    if (nsName != null && !nsName.isEmpty()) {
+                        nsNames.add(nsName.toLowerCase());
+                    }
+                }
+            }
+        }
 
-        // First try to get IPs from additional section (glue records)
+        List<String> nameservers = new ArrayList<>();
         if (response.getAdditional() != null) {
             for (DnsRecord record : response.getAdditional()) {
-                if (record.type() == 1) { // A record
+                if (record.type() == 1 && nsNames.contains(record.name().toLowerCase())) { // glue A record
                     String ip = formatIPv4(record.rdata());
                     if (ip != null) {
                         nameservers.add(ip);
@@ -389,29 +450,25 @@ public class RecursiveDnsResolver {
                 }
             }
         }
-
-        // If we have glue records, use them
         if (!nameservers.isEmpty()) {
             return nameservers;
         }
 
-        // Otherwise, resolve NS records from authority section
-        if (response.getAuthority() != null) {
-            for (DnsRecord record : response.getAuthority()) {
-                if (record.type() == 2) { // NS record
-                    String nsName = parseDomainFromRdata(record.rdata());
-                    if (nsName != null && !nsName.isEmpty()) {
-                        // Try to resolve the NS name to IP
-                        try {
-                            InetAddress addr = InetAddress.getByName(nsName);
-                            nameservers.add(addr.getHostAddress());
-                        } catch (Exception e) {
-                            // If we can't resolve it, try the next one
-                        }
-                    }
+        // No glue: resolve the NS names ourselves, stopping at the first that resolves.
+        // The side lookups must not decide the outcome of the original query.
+        boolean definitive = stats.definitive;
+        boolean nxdomain = stats.nxdomain;
+        for (String nsName : nsNames) {
+            for (DnsRecord record : resolveRecursive(nsName, 1, rootServers, depth + 1, stats)) {
+                String ip = record.type() == 1 ? formatIPv4(record.rdata()) : null;
+                if (ip != null) {
+                    nameservers.add(ip);
                 }
             }
+            if (!nameservers.isEmpty()) break;
         }
+        stats.definitive = definitive;
+        stats.nxdomain = nxdomain;
 
         return nameservers;
     }
@@ -445,8 +502,7 @@ public class RecursiveDnsResolver {
 
             if (position + rdlength > data.length) return null;
 
-            byte[] rdata = new byte[rdlength];
-            System.arraycopy(data, position, rdata, 0, rdlength);
+            byte[] rdata = expandRdata(data, position, rdlength, type);
             position += rdlength;
 
             DnsRecord record = DnsRecord.builder()
@@ -454,7 +510,6 @@ public class RecursiveDnsResolver {
                     .type(type)
                     .rclass(rclass)
                     .ttl(ttl)
-                    .rdlength(rdlength)
                     .rdata(rdata)
                     .build();
 
@@ -465,10 +520,59 @@ public class RecursiveDnsResolver {
         }
     }
 
-    private NameParseResult parseDomainName(byte[] data, int position) {
+    /**
+     * Copy record data, expanding compressed names so the bytes stay valid outside the source packet
+     *
+     * @param data   full packet
+     * @param start  offset of the record data
+     * @param length record data length
+     * @param type   record type
+     * @return self-contained record data
+     */
+    byte[] expandRdata(byte[] data, int start, int length, int type) {
+        // Number of fixed bytes before the first name, and how many names follow
+        int prefix;
+        int names;
+        switch (type) {
+            case 2, 5, 12 -> { prefix = 0; names = 1; }   // NS, CNAME, PTR
+            case 15 -> { prefix = 2; names = 1; }         // MX
+            case 33 -> { prefix = 6; names = 1; }         // SRV
+            case 6 -> { prefix = 0; names = 2; }          // SOA (followed by 20 fixed bytes)
+            default -> { return Arrays.copyOfRange(data, start, start + length); }
+        }
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        int pos = start;
+        out.write(data, pos, prefix);
+        pos += prefix;
+        for (int i = 0; i < names; i++) {
+            NameParseResult name = parseDomainName(data, pos);
+            writeName(out, name.name);
+            pos = name.newPosition;
+        }
+        int end = start + length;
+        if (pos < end) {
+            out.write(data, pos, end - pos);
+        }
+        return out.toByteArray();
+    }
+
+    private void writeName(ByteArrayOutputStream out, String name) {
+        if (!name.isEmpty()) {
+            for (String label : name.split("\\.")) {
+                byte[] bytes = label.getBytes(StandardCharsets.ISO_8859_1);
+                out.write(bytes.length);
+                out.write(bytes, 0, bytes.length);
+            }
+        }
+        out.write(0);
+    }
+
+    NameParseResult parseDomainName(byte[] data, int position) {
         StringBuilder name = new StringBuilder();
         int originalPosition = position;
         boolean jumped = false;
+        int jumps = 0;
 
         while (position < data.length) {
             int labelLength = data[position] & 0xFF;
@@ -479,6 +583,10 @@ public class RecursiveDnsResolver {
             }
 
             if ((labelLength & 0xC0) == 0xC0) {
+                // Bound the hops so a pointer loop cannot hang the resolver
+                if (position + 1 >= data.length || ++jumps > MAX_POINTER_JUMPS) {
+                    throw new IllegalArgumentException("Bad compression pointer");
+                }
                 if (!jumped) {
                     originalPosition = position + 2;
                     jumped = true;
@@ -513,6 +621,14 @@ public class RecursiveDnsResolver {
                 rdata[0] & 0xFF, rdata[1] & 0xFF, rdata[2] & 0xFF, rdata[3] & 0xFF);
     }
 
+    /**
+     * @return NXDOMAIN, NOERROR (no data) or SERVFAIL (nobody answered) for an empty result
+     */
+    private int emptyAnswerRcode(ResolutionStats stats) {
+        if (!stats.definitive) return 2;
+        return stats.nxdomain ? 3 : 0;
+    }
+
     private DnsResponse createErrorResponse(DnsRequest request, int rcode) {
         DnsResponse response = new DnsResponse(request);
         response.setHeader(response.getHeader().withRcode(rcode));
@@ -520,13 +636,7 @@ public class RecursiveDnsResolver {
     }
 
     private String getTypeName(int type) {
-        return switch (type) {
-            case 1 -> "A";
-            case 2 -> "NS";
-            case 5 -> "CNAME";
-            case 28 -> "AAAA";
-            default -> "TYPE_" + type;
-        };
+        return DnsRecord.typeName(type);
     }
 
     private static class ParseResult {
@@ -539,7 +649,7 @@ public class RecursiveDnsResolver {
         }
     }
 
-    private static class NameParseResult {
+    static class NameParseResult {
         final String name;
         final int newPosition;
 
@@ -564,5 +674,7 @@ public class RecursiveDnsResolver {
     private static class ResolutionStats {
         int queriesMade = 0;
         int maxDepthReached = 0;
+        boolean definitive = false;  // a server gave an authoritative empty answer
+        boolean nxdomain = false;
     }
 }

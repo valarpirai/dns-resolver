@@ -246,4 +246,37 @@ class DnsResponseTest {
         DnsHeader header2 = response.getHeader();
         assertEquals(2, header2.ancount());
     }
+
+    @Test
+    void testToBytesTruncatesOversizedResponseAndSetsTc() {
+        DnsResponse response = new DnsResponse();
+        response.getQuestions().add(DnsQuestion.builder().name("example.com").type(16).qclass(1).build());
+        for (int i = 0; i < 10; i++) {
+            response.addAnswer(DnsRecord.builder().name("example.com").type(16).rclass(1).ttl(60)
+                    .rdata(new byte[100]).build());
+        }
+
+        byte[] bytes = response.toBytes(512);
+
+        assertTrue(bytes.length <= 512);
+        assertNotEquals(0, bytes[2] & 0x02, "TC bit must be set");
+        assertTrue(response.toBytes().length > 512);
+    }
+
+    @Test
+    void testToBytesHandlesLargeRecordData() {
+        DnsResponse response = new DnsResponse();
+        response.getQuestions().add(DnsQuestion.builder().name("example.com").type(16).qclass(1).build());
+        response.addAnswer(DnsRecord.builder().name("example.com").type(16).rclass(1).ttl(60)
+                .rdata(new byte[5000]).build());
+
+        assertTrue(response.toBytes().length > 5000);
+    }
+
+    @Test
+    void testToBytesRejectsEmptyLabel() {
+        DnsResponse response = new DnsResponse();
+        response.getQuestions().add(DnsQuestion.builder().name("a..b").type(1).qclass(1).build());
+        assertThrows(IllegalArgumentException.class, response::toBytes);
+    }
 }

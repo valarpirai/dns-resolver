@@ -6,7 +6,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -77,36 +79,69 @@ public class DnsResponse {
      * Convert DNS response to byte array for transmission
      */
     public byte[] toBytes() {
-        // Calculate required buffer size dynamically to handle multiple answers
-        int estimatedSize = 512 + (answers.size() * 256); // Account for multiple answers
-        ByteBuffer buffer = ByteBuffer.allocate(estimatedSize);
+        return serialize(answers, header);
+    }
 
-        // Update header counts to reflect actual data
-        header = header.withQdcount(questions.size());
-        header = header.withAncount(answers.size());
+    /**
+     * Convert DNS response to bytes that fit in one UDP packet.
+     * Trailing answers are dropped and the TC bit is set when the full response is too large.
+     *
+     * @param maxSize largest packet the client accepts
+     * @return response bytes no longer than maxSize (unless the question alone exceeds it)
+     */
+    public byte[] toBytes(int maxSize) {
+        byte[] full = serialize(answers, header);
+        if (full.length <= maxSize) {
+            return full;
+        }
+
+        List<DnsRecord> kept = new ArrayList<>(answers);
+        byte[] truncated;
+        do {
+            if (!kept.isEmpty()) {
+                kept.remove(kept.size() - 1);
+            }
+            truncated = serialize(kept, header.withTc(true));
+        } while (truncated.length > maxSize && !kept.isEmpty());
+        return truncated;
+    }
+
+    private byte[] serialize(List<DnsRecord> records, DnsHeader hdr) {
+        // Exact upper bound: each name takes at most length + 2 bytes on the wire
+        int size = 12;
+        for (DnsQuestion question : questions) {
+            size += question.name().length() + 2 + 4;
+        }
+        for (DnsRecord record : records) {
+            size += record.name().length() + 2 + 10 + (record.rdata() != null ? record.rdata().length : 0);
+        }
+        ByteBuffer buffer = ByteBuffer.allocate(size);
+
+        // Header counts reflect the data actually written
+        hdr = hdr.withQdcount(questions.size()).withAncount(records.size());
 
         // Write header
-        buffer.putShort((short) header.id());
+        buffer.putShort((short) hdr.id());
 
         // Flags byte 1
         int flags1 = 0;
-        if (header.qr()) flags1 |= 0x80;
-        flags1 |= (header.opcode() & 0x0F) << 3;
-        if (header.aa()) flags1 |= 0x04;
-        if (header.tc()) flags1 |= 0x02;
-        if (header.rd()) flags1 |= 0x01;
+        if (hdr.qr()) flags1 |= 0x80;
+        flags1 |= (hdr.opcode() & 0x0F) << 3;
+        if (hdr.aa()) flags1 |= 0x04;
+        if (hdr.tc()) flags1 |= 0x02;
+        if (hdr.rd()) flags1 |= 0x01;
         buffer.put((byte) flags1);
 
         // Flags byte 2
         int flags2 = 0;
-        if (header.ra()) flags2 |= 0x80;
-        flags2 |= (header.rcode() & 0x0F);
+        if (hdr.ra()) flags2 |= 0x80;
+        flags2 |= (hdr.rcode() & 0x0F);
         buffer.put((byte) flags2);
 
-        buffer.putShort((short) header.qdcount());
-        buffer.putShort((short) header.ancount());
-        buffer.putShort((short) header.nscount());
-        buffer.putShort((short) header.arcount());
+        buffer.putShort((short) hdr.qdcount());
+        buffer.putShort((short) hdr.ancount());
+        buffer.putShort((short) hdr.nscount());
+        buffer.putShort((short) hdr.arcount());
 
         // Write questions
         for (DnsQuestion question : questions) {
@@ -116,7 +151,7 @@ public class DnsResponse {
         }
 
         // Write all answers
-        for (DnsRecord answer : answers) {
+        for (DnsRecord answer : records) {
             writeQName(buffer, answer.name());
             buffer.putShort((short) answer.type());
             buffer.putShort((short) answer.rclass());
@@ -127,10 +162,7 @@ public class DnsResponse {
             }
         }
 
-        byte[] result = new byte[buffer.position()];
-        buffer.flip();
-        buffer.get(result);
-        return result;
+        return Arrays.copyOf(buffer.array(), buffer.position());
     }
 
     /**
@@ -144,8 +176,12 @@ public class DnsResponse {
 
         String[] labels = name.split("\\.");
         for (String label : labels) {
-            buffer.put((byte) label.length());
-            buffer.put(label.getBytes());
+            byte[] bytes = label.getBytes(StandardCharsets.ISO_8859_1);
+            if (bytes.length == 0 || bytes.length > 63) {
+                throw new IllegalArgumentException("Invalid DNS label in name: " + name);
+            }
+            buffer.put((byte) bytes.length);
+            buffer.put(bytes);
         }
         buffer.put((byte) 0); // End of name
     }

@@ -54,6 +54,14 @@ public record DnsRecord(
     }
 
     public String getTypeName() {
+        return typeName(type);
+    }
+
+    /**
+     * @param type DNS record type number
+     * @return mnemonic such as A or CNAME, or TYPE_n when unknown
+     */
+    public static String typeName(int type) {
         return switch (type) {
             case 1 -> "A";
             case 2 -> "NS";
@@ -64,6 +72,7 @@ public record DnsRecord(
             case 16 -> "TXT";
             case 28 -> "AAAA";
             case 33 -> "SRV";
+            case 255 -> "ANY";
             default -> "TYPE_" + type;
         };
     }

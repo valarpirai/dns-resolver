@@ -3,6 +3,8 @@ package org.valarpirai.util;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Properties;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -16,6 +18,7 @@ public class Configuration {
     private static final String ENV_PREFIX = "DNS_";
 
     private final Properties properties;
+    private final Set<String> loggedEnvKeys = ConcurrentHashMap.newKeySet();
 
     private Configuration() {
         this.properties = loadProperties();
@@ -49,7 +52,7 @@ public class Configuration {
      */
     private void setDefaults(Properties props) {
         props.setProperty("server.port", "53");
-        props.setProperty("server.buffer.size", "512");
+        props.setProperty("server.buffer.size", "4096");
         props.setProperty("server.selector.timeout", "1000");
         props.setProperty("server.debug", "false");
         props.setProperty("server.bind.address", "0.0.0.0");
@@ -74,7 +77,10 @@ public class Configuration {
         // Check environment variable first
         String envValue = System.getenv(envKey);
         if (envValue != null) {
-            LOGGER.info("Using environment variable " + envKey + " = " + envValue);
+            // Getters run per query; log each override once
+            if (loggedEnvKeys.add(envKey)) {
+                LOGGER.info("Using environment variable " + envKey + " = " + envValue);
+            }
             return envValue;
         }
 
@@ -139,7 +145,7 @@ public class Configuration {
      * Get buffer size
      */
     public int getBufferSize() {
-        return getInt("server.buffer.size", 512);
+        return getInt("server.buffer.size", 4096);
     }
 
     /**

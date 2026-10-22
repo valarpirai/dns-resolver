@@ -94,6 +94,11 @@ public record DnsHeader(
                 qdcount, newAncount, nscount, arcount);
     }
 
+    public DnsHeader withTc(boolean newTc) {
+        return new DnsHeader(id, qr, opcode, aa, newTc, rd, ra, rcode,
+                qdcount, ancount, nscount, arcount);
+    }
+
     public DnsHeader withRa(boolean newRa) {
         return new DnsHeader(id, qr, opcode, aa, tc, rd, newRa, rcode,
                 qdcount, ancount, nscount, arcount);

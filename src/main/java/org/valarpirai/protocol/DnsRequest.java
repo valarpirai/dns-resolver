@@ -25,6 +25,10 @@ public class DnsRequest {
 
     private byte[] rawData;  // Original raw query data
 
+    // Largest UDP response the client accepts (512 unless an EDNS OPT record says more)
+    @Builder.Default
+    private int udpPayloadSize = 512;
+
     public void addQuestion(DnsQuestion question) {
         this.questions.add(question);
     }
@@ -143,7 +147,29 @@ public class DnsRequest {
             }
         }
 
+        request.parseUdpPayloadSize(data, position, header.arcount());
         return request;
+    }
+
+    /**
+     * Read the UDP payload size from an EDNS OPT record (type 41, class = size) if present
+     *
+     * @param data     raw query
+     * @param position offset just after the question section
+     * @param arcount  additional record count from the header
+     */
+    private void parseUdpPayloadSize(byte[] data, int position, int arcount) {
+        // OPT records use the root name (a single zero byte) as owner
+        for (int i = 0; i < arcount && position + 11 <= data.length && data[position] == 0; i++) {
+            int type = ((data[position + 1] & 0xFF) << 8) | (data[position + 2] & 0xFF);
+            int rdlength = ((data[position + 9] & 0xFF) << 8) | (data[position + 10] & 0xFF);
+            if (type == 41) {
+                int size = ((data[position + 3] & 0xFF) << 8) | (data[position + 4] & 0xFF);
+                udpPayloadSize = Math.max(512, Math.min(size, 4096));
+                return;
+            }
+            position += 11 + rdlength;
+        }
     }
 
     @Override

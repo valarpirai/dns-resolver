@@ -7,7 +7,6 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.Expiry;
 import com.github.benmanes.caffeine.cache.RemovalCause;
-import lombok.extern.java.Log;
 
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -19,21 +18,20 @@ import java.util.logging.Logger;
  * DNS Response Cache using Caffeine
  * Implements TTL-based expiration from DNS responses
  */
-@Log
 public class DnsCache {
     private static final Logger LOGGER = Logger.getLogger(DnsCache.class.getName());
 
     private final Cache<CacheKey, CacheEntry> cache;
     private final Configuration config;
     private final ScheduledExecutorService statsScheduler;
-    private final int maxEntries;
+    private final int minTtl;
     private final long maxMemoryBytes;
 
     public DnsCache(Configuration config) {
         this.config = config;
 
         // Read cache configuration
-        this.maxEntries = config.getInt("cache.max.entries", 10000);
+        this.minTtl = config.getInt("cache.min.ttl", 10);
         this.maxMemoryBytes = config.getLong("cache.max.memory", 10485760L); // 10MB default
         int statsInterval = config.getInt("cache.stats.interval", 300); // 5 minutes default
 
@@ -49,7 +47,7 @@ public class DnsCache {
                     @Override
                     public long expireAfterUpdate(CacheKey key, CacheEntry value,
                                                  long currentTime, long currentDuration) {
-                        return currentDuration;
+                        return TimeUnit.SECONDS.toNanos(value.getTtl());
                     }
 
                     @Override
@@ -81,8 +79,8 @@ public class DnsCache {
                 .recordStats()
                 .build();
 
-        LOGGER.info(String.format("DNS Cache initialized - Max entries: %d, Max memory: %d bytes (%.2f MB), TTL-based expiration enabled",
-                maxEntries, maxMemoryBytes, maxMemoryBytes / 1024.0 / 1024.0));
+        LOGGER.info(String.format("DNS Cache initialized - Max memory: %d bytes (%.2f MB), TTL-based expiration enabled",
+                maxMemoryBytes, maxMemoryBytes / 1024.0 / 1024.0));
 
         // Schedule periodic stats logging if enabled
         if (statsInterval > 0) {
@@ -114,7 +112,7 @@ public class DnsCache {
         if (entry != null) {
             LOGGER.info(String.format("Cache HIT: %s %s (TTL: %ds)",
                     name, getTypeName(type), entry.getTtl()));
-            return entry.getRecords();
+            return entry.getAgedRecords();
         }
 
         LOGGER.info(String.format("Cache MISS: %s %s", name, getTypeName(type)));
@@ -130,26 +128,26 @@ public class DnsCache {
         }
 
         // Find minimum TTL from all records
-        int minTtl = records.stream()
+        int recordTtl = records.stream()
                 .mapToInt(DnsRecord::ttl)
                 .min()
                 .orElse(300); // Default 5 minutes
 
         // Don't cache records with very short TTL
-        if (minTtl < 10) {
+        if (recordTtl < minTtl) {
             if (config.isDebugEnabled()) {
                 LOGGER.info(String.format("Skipping cache: %s %s (TTL too short: %ds)",
-                        name, getTypeName(type), minTtl));
+                        name, getTypeName(type), recordTtl));
             }
             return;
         }
 
         CacheKey key = new CacheKey(name.toLowerCase(), type);
-        CacheEntry entry = new CacheEntry(records, minTtl);
+        CacheEntry entry = new CacheEntry(records, recordTtl);
         cache.put(key, entry);
 
         LOGGER.info(String.format("Cached: %s %s (%d record(s), TTL: %ds)",
-                name, getTypeName(type), records.size(), minTtl));
+                name, getTypeName(type), records.size(), recordTtl));
     }
 
     /**
@@ -228,10 +226,22 @@ public class DnsCache {
     private static class CacheEntry {
         private final List<DnsRecord> records;
         private final int ttl;
+        private final long createdNanos = System.nanoTime();
 
         CacheEntry(List<DnsRecord> records, int ttl) {
             this.records = records;
             this.ttl = ttl;
+        }
+
+        /**
+         * @return the records with each TTL reduced by the time spent in the cache
+         */
+        public List<DnsRecord> getAgedRecords() {
+            int elapsed = (int) TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - createdNanos);
+            return records.stream()
+                    .map(r -> new DnsRecord(r.name(), r.type(), r.rclass(), Math.max(0, r.ttl() - elapsed),
+                            r.rdlength(), r.rdata()))
+                    .toList();
         }
 
         public List<DnsRecord> getRecords() {
@@ -243,20 +253,7 @@ public class DnsCache {
         }
     }
 
-    /**
-     * Get DNS type name
-     */
     private String getTypeName(int type) {
-        return switch (type) {
-            case 1 -> "A";
-            case 2 -> "NS";
-            case 5 -> "CNAME";
-            case 6 -> "SOA";
-            case 12 -> "PTR";
-            case 15 -> "MX";
-            case 16 -> "TXT";
-            case 28 -> "AAAA";
-            default -> "TYPE_" + type;
-        };
+        return DnsRecord.typeName(type);
     }
 }

@@ -62,13 +62,12 @@ The application can be configured via:
 |----------|---------------------|---------|-------------|
 | `server.port` | `DNS_SERVER_PORT` | `53` | UDP port to listen on |
 | `server.bind.address` | `DNS_SERVER_BIND_ADDRESS` | `0.0.0.0` | Address to bind to |
-| `server.buffer.size` | `DNS_SERVER_BUFFER_SIZE` | `512` | Buffer size in bytes |
+| `server.buffer.size` | `DNS_SERVER_BUFFER_SIZE` | `4096` | Incoming packet buffer size in bytes |
 | `server.selector.timeout` | `DNS_SERVER_SELECTOR_TIMEOUT` | `1000` | Selector timeout in ms |
 | `server.debug` | `DNS_SERVER_DEBUG` | `false` | Enable debug logging |
 | `resolver.root.servers` | `DNS_RESOLVER_ROOT_SERVERS` | `198.41.0.4,...` | Root DNS servers (comma-separated) |
 | `resolver.timeout` | `DNS_RESOLVER_TIMEOUT` | `5000` | Query timeout in ms |
 | `resolver.max.depth` | `DNS_RESOLVER_MAX_DEPTH` | `16` | Maximum recursion depth |
-| `cache.max.entries` | `DNS_CACHE_MAX_ENTRIES` | `10000` | Maximum cache entries |
 | `cache.max.memory` | `DNS_CACHE_MAX_MEMORY` | `10485760` | Maximum memory (10MB) |
 | `cache.min.ttl` | `DNS_CACHE_MIN_TTL` | `10` | Minimum TTL in seconds |
 | `cache.stats.interval` | `DNS_CACHE_STATS_INTERVAL` | `300` | Stats logging interval in seconds |
@@ -252,8 +251,7 @@ dns-resolver/
 │   │   │   │   ├── Main.java                    # Entry point
 │   │   │   │   └── DnsServer.java               # Non-blocking NIO server
 │   │   │   ├── resolver/
-│   │   │   │   ├── RecursiveDnsResolver.java    # True recursive resolver
-│   │   │   │   └── DnsResolver.java             # Forwarding resolver (unused)
+│   │   │   │   └── RecursiveDnsResolver.java    # True recursive resolver
 │   │   │   ├── cache/
 │   │   │   │   └── DnsCache.java                # Caffeine-based cache
 │   │   │   ├── protocol/
