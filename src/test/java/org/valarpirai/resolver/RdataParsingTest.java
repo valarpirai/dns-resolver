@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
-import org.valarpirai.protocol.DnsException;
+import org.valarpirai.model.DnsException;
 import org.valarpirai.util.Configuration;
 
 class RdataParsingTest {

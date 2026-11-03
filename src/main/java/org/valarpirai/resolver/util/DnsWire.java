@@ -1,7 +1,7 @@
-package org.valarpirai.resolver;
+package org.valarpirai.resolver.util;
 
 import lombok.extern.slf4j.Slf4j;
-import org.valarpirai.protocol.*;
+import org.valarpirai.model.*;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;

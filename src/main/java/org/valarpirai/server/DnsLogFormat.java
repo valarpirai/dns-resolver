@@ -1,6 +1,6 @@
 package org.valarpirai.server;
 
-import org.valarpirai.protocol.DnsRecord;
+import org.valarpirai.model.DnsRecord;
 
 /**
  * Formats raw bytes and record data for log lines.

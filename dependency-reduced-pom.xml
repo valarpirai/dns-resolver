@@ -49,7 +49,7 @@
               <goal>shade</goal>
             </goals>
             <configuration>
-              <finalName>dns-resolver</finalName>
+              <finalName>dns-resolver-fat-${project.version}</finalName>
               <transformers>
                 <transformer>
                   <mainClass>${main.class}</mainClass>

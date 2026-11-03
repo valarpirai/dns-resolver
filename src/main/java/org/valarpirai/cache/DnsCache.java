@@ -2,7 +2,7 @@ package org.valarpirai.cache;
 
 import lombok.extern.slf4j.Slf4j;
 import org.valarpirai.util.Configuration;
-import org.valarpirai.protocol.DnsRecord;
+import org.valarpirai.model.DnsRecord;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;

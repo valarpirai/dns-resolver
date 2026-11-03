@@ -1,7 +1,7 @@
 package org.valarpirai.resolver;
 
 import lombok.extern.slf4j.Slf4j;
-import org.valarpirai.protocol.*;
+import org.valarpirai.model.*;
 import org.valarpirai.util.Configuration;
 import org.valarpirai.cache.DelegationCache;
 import org.valarpirai.cache.DnsCache;

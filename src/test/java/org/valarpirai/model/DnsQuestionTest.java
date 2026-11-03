@@ -1,4 +1,4 @@
-package org.valarpirai.protocol;
+package org.valarpirai.model;
 
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;

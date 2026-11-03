@@ -2,7 +2,7 @@ package org.valarpirai.server;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.valarpirai.protocol.*;
+import org.valarpirai.model.*;
 import org.valarpirai.resolver.RecursiveDnsResolver;
 import org.valarpirai.util.Configuration;
 

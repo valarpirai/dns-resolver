@@ -2,7 +2,7 @@ package org.valarpirai.resolver;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.valarpirai.protocol.*;
+import org.valarpirai.model.*;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
