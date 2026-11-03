@@ -3,6 +3,7 @@ package org.valarpirai.resolver;
 import lombok.extern.slf4j.Slf4j;
 import org.valarpirai.protocol.*;
 import org.valarpirai.util.Configuration;
+import org.valarpirai.cache.DelegationCache;
 import org.valarpirai.cache.DnsCache;
 
 import java.net.SocketTimeoutException;
@@ -17,6 +18,7 @@ import java.util.List;
 public class RecursiveDnsResolver {
     private final List<String> rootServers;
     private final DnsCache cache;
+    private final DelegationCache delegations = new DelegationCache();
     private final Configuration config;
     private final int maxDepth;
     private final int timeoutMs;
@@ -88,7 +90,7 @@ public class RecursiveDnsResolver {
         try {
             long resolveStartTime = System.currentTimeMillis();
             ResolutionStats stats = new ResolutionStats();
-            List<DnsRecord> answers = resolveRecursive(qname, qtype, rootServers, 0, stats);
+            List<DnsRecord> answers = resolveFromClosest(qname, qtype, 0, stats);
             long resolveTime = System.currentTimeMillis() - resolveStartTime;
             long totalTime = System.currentTimeMillis() - startTime;
 
@@ -124,6 +126,30 @@ public class RecursiveDnsResolver {
             log.error("Recursive resolution failed for " + qname + " after " + totalTime + " ms", e);
             return createErrorResponse(request, 2); // Server failure
         }
+    }
+
+    /**
+     * Resolve a name starting at the closest cached zone, falling back to the root servers.
+     * The fallback covers a stale delegation: the cached servers gave no answer at all.
+     *
+     * @param qname the name to resolve
+     * @param qtype the record type to resolve
+     * @param depth the current recursion depth
+     * @param stats statistics for the whole resolution
+     * @return the answer records, empty when nothing resolved
+     */
+    private List<DnsRecord> resolveFromClosest(String qname, int qtype, int depth, ResolutionStats stats) {
+        List<String> cached = delegations.closest(qname);
+        if (cached == null) {
+            return resolveRecursive(qname, qtype, rootServers, depth, stats);
+        }
+
+        List<DnsRecord> answers = resolveRecursive(qname, qtype, cached, depth, stats);
+        if (answers.isEmpty() && !stats.definitive) {
+            log.warn("Cached delegation gave no answer for " + qname + ", retrying from the root servers");
+            return resolveRecursive(qname, qtype, rootServers, depth, stats);
+        }
+        return answers;
     }
 
     /**
@@ -168,12 +194,12 @@ public class RecursiveDnsResolver {
                         log.info(String.format("[Depth %d] Following CNAME: %s -> %s", depth, qname, cnameTarget));
                     }
                     List<DnsRecord> allAnswers = new ArrayList<>(answers);
-                    allAnswers.addAll(resolveRecursive(cnameTarget, qtype, rootServers, depth + 1, stats));
+                    allAnswers.addAll(resolveFromClosest(cnameTarget, qtype, depth + 1, stats));
                     return allAnswers;
                 }
 
                 // Check for referral (authority/additional sections with NS records)
-                List<String> referralNS = extractReferralNameservers(response, depth, stats);
+                List<String> referralNS = extractReferralNameservers(response, qname, depth, stats);
                 if (!referralNS.isEmpty()) {
                     if (config.isDebugEnabled()) {
                         log.info(String.format("[Depth %d] Got referral to %d nameserver(s)",
@@ -230,15 +256,26 @@ public class RecursiveDnsResolver {
     /**
      * Extract referral nameserver addresses from the authority and additional sections.
      * Glue is only trusted when it belongs to an NS record in the authority section.
+     * The result is remembered as the delegation of the referred zone.
+     *
+     * @param response the referral from an upstream server
+     * @param qname    the name being resolved, used to reject delegations for unrelated zones
+     * @param depth    the current recursion depth
+     * @param stats    statistics for the whole resolution
+     * @return IPv4 addresses of the zone's nameservers, empty if none could be found
      */
-    private List<String> extractReferralNameservers(DnsResponse response, int depth, ResolutionStats stats) {
+    private List<String> extractReferralNameservers(DnsResponse response, String qname, int depth, ResolutionStats stats) {
         List<String> nsNames = new ArrayList<>();
+        String zone = null;
+        int ttl = Integer.MAX_VALUE;
         if (response.getAuthority() != null) {
             for (DnsRecord record : response.getAuthority()) {
                 if (record.type() == 2) { // NS record
                     String nsName = DnsWire.parseDomainFromRdata(record.rdata());
                     if (nsName != null && !nsName.isEmpty()) {
                         nsNames.add(nsName.toLowerCase());
+                        if (zone == null) zone = record.name();
+                        ttl = Math.min(ttl, record.ttl());
                     }
                 }
             }
@@ -251,30 +288,34 @@ public class RecursiveDnsResolver {
                     String ip = formatIPv4(record.rdata());
                     if (ip != null) {
                         nameservers.add(ip);
+                        ttl = Math.min(ttl, record.ttl());
                     }
                 }
             }
         }
-        if (!nameservers.isEmpty()) {
-            return nameservers;
-        }
 
-        // No glue: resolve the NS names ourselves, stopping at the first that resolves.
-        // The side lookups must not decide the outcome of the original query.
-        boolean definitive = stats.definitive;
-        boolean nxdomain = stats.nxdomain;
-        for (String nsName : nsNames) {
-            for (DnsRecord record : resolveRecursive(nsName, 1, rootServers, depth + 1, stats)) {
-                String ip = record.type() == 1 ? formatIPv4(record.rdata()) : null;
-                if (ip != null) {
-                    nameservers.add(ip);
+        if (nameservers.isEmpty()) {
+            // No glue: resolve the NS names ourselves, stopping at the first that resolves.
+            // The side lookups must not decide the outcome of the original query.
+            boolean definitive = stats.definitive;
+            boolean nxdomain = stats.nxdomain;
+            for (String nsName : nsNames) {
+                for (DnsRecord record : resolveFromClosest(nsName, 1, depth + 1, stats)) {
+                    String ip = record.type() == 1 ? formatIPv4(record.rdata()) : null;
+                    if (ip != null) {
+                        nameservers.add(ip);
+                        ttl = Math.min(ttl, record.ttl());
+                    }
                 }
+                if (!nameservers.isEmpty()) break;
             }
-            if (!nameservers.isEmpty()) break;
+            stats.definitive = definitive;
+            stats.nxdomain = nxdomain;
         }
-        stats.definitive = definitive;
-        stats.nxdomain = nxdomain;
 
+        if (zone != null && !nameservers.isEmpty()) {
+            delegations.put(zone, nameservers, ttl, qname);
+        }
         return nameservers;
     }
 
@@ -308,6 +349,7 @@ public class RecursiveDnsResolver {
     public void shutdown() {
         log.info("Shutting down recursive DNS resolver...");
         cache.shutdown();
+        delegations.clear();
         log.info("Recursive DNS resolver shutdown completed");
     }
 
