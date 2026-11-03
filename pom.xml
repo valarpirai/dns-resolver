@@ -103,7 +103,7 @@
                             <goal>shade</goal>
                         </goals>
                         <configuration>
-                            <finalName>dns-resolver</finalName>
+                            <finalName>dns-resolver-fat-${project.version}</finalName>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>${main.class}</mainClass>

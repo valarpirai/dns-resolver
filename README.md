@@ -47,7 +47,7 @@ Or use the custom task:
 mvn exec:exec@dns-build
 ```
 
-The executable JAR will be created at `target/dns-resolver.jar`
+The executable JAR will be created at `target/dns-resolver-fat-1.0-SNAPSHOT.jar`
 
 ## Configuration
 
@@ -79,13 +79,13 @@ Using environment variables:
 ```bash
 export DNS_SERVER_PORT=5353
 export DNS_SERVER_DEBUG=true
-java -jar target/dns-resolver.jar
+java -jar target/dns-resolver-fat-1.0-SNAPSHOT.jar
 ```
 
 Or inline:
 
 ```bash
-DNS_SERVER_PORT=5353 DNS_SERVER_DEBUG=true java -jar target/dns-resolver.jar
+DNS_SERVER_PORT=5353 DNS_SERVER_DEBUG=true java -jar target/dns-resolver-fat-1.0-SNAPSHOT.jar
 ```
 
 ## Running the Application
@@ -95,13 +95,13 @@ DNS_SERVER_PORT=5353 DNS_SERVER_DEBUG=true java -jar target/dns-resolver.jar
 Run with default configuration (port 53):
 
 ```bash
-sudo java -jar target/dns-resolver.jar
+sudo java -jar target/dns-resolver-fat-1.0-SNAPSHOT.jar
 ```
 
 Note: Port 53 requires root/administrator privileges. To use an alternate port:
 
 ```bash
-DNS_SERVER_PORT=5353 java -jar target/dns-resolver.jar
+DNS_SERVER_PORT=5353 java -jar target/dns-resolver-fat-1.0-SNAPSHOT.jar
 ```
 
 ### Using Docker

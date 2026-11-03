@@ -21,7 +21,7 @@ FROM azul/zulu-openjdk-alpine:21-jre
 WORKDIR /app
 
 # Copy the built JAR from builder stage
-COPY --from=builder /app/target/dns-resolver.jar ./dns-resolver.jar
+COPY --from=builder /app/target/dns-resolver-fat-*.jar ./dns-resolver.jar
 
 # Expose DNS port (UDP 53)
 EXPOSE 53/udp

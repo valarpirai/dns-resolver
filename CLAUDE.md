@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-- Build the shaded JAR: `mvn clean package` (output: `target/dns-resolver.jar`)
+- Build the shaded JAR: `mvn clean package` (output: `target/dns-resolver-fat-1.0-SNAPSHOT.jar`)
 - All tests: `mvn test`
 - One test class: `mvn test -Dtest=RecursiveDnsResolverIntegrationTest`
-- Run on an unprivileged port: `DNS_SERVER_PORT=5353 java -jar target/dns-resolver.jar` (default port 53 needs root)
+- Run on an unprivileged port: `DNS_SERVER_PORT=5353 java -jar target/dns-resolver-fat-1.0-SNAPSHOT.jar` (default port 53 needs root)
 - Try it: `dig @localhost -p 5353 google.com A`
 - Docker: `docker build -t dns-resolver .`
 
