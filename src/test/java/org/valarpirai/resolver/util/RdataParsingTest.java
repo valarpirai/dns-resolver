@@ -1,10 +1,11 @@
-package org.valarpirai.resolver;
+package org.valarpirai.resolver.util;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 import org.valarpirai.model.DnsException;
+import org.valarpirai.resolver.RecursiveDnsResolver;
 import org.valarpirai.util.Configuration;
 
 class RdataParsingTest {

@@ -14,7 +14,7 @@ import java.util.List;
  * Builds upstream queries and parses upstream replies, including name decompression.
  */
 @Slf4j
-final class DnsWire {
+final public class DnsWire {
     private static final int MAX_POINTER_JUMPS = 32;
 
     private DnsWire() {}
@@ -22,7 +22,7 @@ final class DnsWire {
     /**
      * Build DNS query bytes
      */
-    static byte[] buildQuery(DnsRequest request) {
+    public static byte[] buildQuery(DnsRequest request) {
         ByteBuffer buffer = ByteBuffer.allocate(512);
 
         // Header
@@ -59,7 +59,7 @@ final class DnsWire {
     /**
      * Parse full DNS response including authority and additional sections
      */
-    static DnsResponse parseFullResponse(byte[] data, DnsRequest originalRequest) {
+    public static DnsResponse parseFullResponse(byte[] data, DnsRequest originalRequest) {
         try {
             if (data.length < 12) {
                 return null;
@@ -262,7 +262,7 @@ final class DnsWire {
         return new NameParseResult(name.toString(), jumped ? originalPosition : position);
     }
 
-    static String parseDomainFromRdata(byte[] rdata) {
+    public static String parseDomainFromRdata(byte[] rdata) {
         if (rdata == null || rdata.length == 0) return null;
         NameParseResult result = parseDomainName(rdata, 0);
         return result.name;
