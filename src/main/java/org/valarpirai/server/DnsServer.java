@@ -13,10 +13,9 @@ import java.nio.channels.DatagramChannel;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.util.Iterator;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 
 /**
  * Non-blocking UDP DNS Server using Java NIO
@@ -36,6 +35,7 @@ public class DnsServer {
     private DnsQueryHandler handler;
     private Selector selector;
     private final ExecutorService workers;
+    private final Semaphore inFlight;
 
     @Getter
     private volatile boolean running;
@@ -53,10 +53,10 @@ public class DnsServer {
         this.selectorTimeout = config.getSelectorTimeout();
         this.running = false;
 
-        // Resolution blocks on upstream I/O, so it runs off the event loop; excess queries are dropped (UDP)
-        int threads = config.getInt("server.worker.threads", 32);
-        this.workers = new ThreadPoolExecutor(threads, threads, 0, TimeUnit.MILLISECONDS,
-                new ArrayBlockingQueue<>(1000), new ThreadPoolExecutor.DiscardPolicy());
+        // Resolution blocks on upstream I/O, so each query runs on its own virtual thread off the event loop.
+        // In-flight queries are capped by a semaphore; excess queries are dropped (UDP).
+        this.inFlight = new Semaphore(config.getInt("server.max.inflight", 1000));
+        this.workers = Executors.newVirtualThreadPerTaskExecutor();
     }
 
     /**
@@ -153,7 +153,17 @@ public class DnsServer {
         // Copy out of the shared buffer, then resolve and reply on a worker thread
         byte[] query = new byte[buffer.remaining()];
         buffer.get(query);
-        workers.execute(() -> handler.handle(query, clientAddress));
+        if (!inFlight.tryAcquire()) {
+            log.warn("Too many in-flight queries, dropping query from " + clientAddress.getHostString());
+            return;
+        }
+        workers.execute(() -> {
+            try {
+                handler.handle(query, clientAddress);
+            } finally {
+                inFlight.release();
+            }
+        });
     }
 
     /**

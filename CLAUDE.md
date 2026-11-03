@@ -19,7 +19,7 @@ A UDP DNS server that does true recursive resolution from the root servers. It d
 
 Request flow (package `org.valarpirai`):
 
-1. `server/DnsServer` runs a single-threaded NIO receive loop (`DatagramChannel` + `Selector`) and hands each packet to a worker pool (`server.worker.threads`, bounded queue, overflow dropped). Workers parse with `DnsRequest.parse()`.
+1. `server/DnsServer` runs a single-threaded NIO receive loop (`DatagramChannel` + `Selector`) and hands each packet to a virtual-thread-per-query executor (in-flight cap `server.max.inflight`, overflow dropped). Workers parse with `DnsRequest.parse()`.
 2. `resolver/RecursiveDnsResolver` checks `cache/DnsCache` first. On a miss it queries the root servers, then follows referrals (using glue records) and CNAME chains down to the authoritative answer. Depth is capped by `resolver.max.depth`.
 3. The result is cached with the minimum record TTL, then `DnsResponse.toBytes()` serializes it back to the client.
 
